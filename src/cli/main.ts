@@ -37,7 +37,14 @@ import { RecoveryAgentCliHandler } from './RecoveryAgentCliHandler.js'
 
 function resolveRequest(arguments_: string[]): string { const argumentRequest = arguments_.join(' ').trim(); if (argumentRequest.length > 0) return argumentRequest; if (process.stdin.isTTY === true) return ''; return readFileSync(0, 'utf8').trim() }
 function requireArgument(args: readonly string[], index: number, label: string): string { const value = args[index]?.trim(); if (value === undefined || value.length === 0) throw new Error(`${label} is required`); return value }
-function requireApprovalToken(): string { const token = process.env['RECOVERY_APPROVAL_TOKEN']?.trim(); if (token === undefined || token.length < 16) throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters'); return token }
+function requireApprovalToken(): string {
+  const token = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
+  if (token === undefined || token.length < 16) throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters')
+  const actor = optionalEnvironment('RECOVERY_APPROVAL_ACTOR')
+  if (actor === undefined) return token
+  if (!/^[A-Za-z0-9._-]+$/.test(actor)) throw new Error('RECOVERY_APPROVAL_ACTOR may contain only letters, numbers, dot, underscore, and hyphen')
+  return `${actor}:${token}`
+}
 function optionalEnvironment(name: string): string | undefined { const value = process.env[name]?.trim(); return value === undefined || value.length === 0 ? undefined : value }
 
 function resolveStateAuthorityCommand(): string | undefined {
@@ -104,7 +111,10 @@ async function main(): Promise<void> {
 
     const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watches, semanticWatches, durabilityBarrier))
     const approvalToken = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
-    const approvalServer = approvalToken === undefined || approvalToken.length === 0 ? undefined : new RecoveryApprovalSocketServer(control, new RecoveryApprovalSocketPathResolver().resolve(process.env))
+    const hasNamedApprovalPrincipals = config.approvalPrincipals.length > 0
+    const approvalServer = !hasNamedApprovalPrincipals && (approvalToken === undefined || approvalToken.length === 0)
+      ? undefined
+      : new RecoveryApprovalSocketServer(control, new RecoveryApprovalSocketPathResolver().resolve(process.env))
     if (approvalServer !== undefined) { await approvalServer.listen(); process.stderr.write(`Recovery approval socket listening at ${new RecoveryApprovalSocketPathResolver().resolve(process.env)}\n`) }
 
     watches.start(); mcpServer.serve()

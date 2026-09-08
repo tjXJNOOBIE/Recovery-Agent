@@ -30,22 +30,12 @@ export class RecoveryControlRuntimeBuilder {
   private readonly environment: RecoveryAgentEnvironment
   private readonly durabilityCheckpoint: IRecoveryDurabilityCheckpoint | undefined
 
-  public constructor(
-    bootstrap: IStrandsAgentRuntimeBootstrap,
-    environment: RecoveryAgentEnvironment = process.env,
-    durabilityCheckpoint?: IRecoveryDurabilityCheckpoint,
-  ) {
-    this.bootstrap = bootstrap
-    this.environment = environment
-    this.durabilityCheckpoint = durabilityCheckpoint
+  public constructor(bootstrap: IStrandsAgentRuntimeBootstrap, environment: RecoveryAgentEnvironment = process.env, durabilityCheckpoint?: IRecoveryDurabilityCheckpoint) {
+    this.bootstrap = bootstrap; this.environment = environment; this.durabilityCheckpoint = durabilityCheckpoint
   }
 
   public build(config: RecoveryControlConfig): RecoveryControlRuntime {
-    const gateways = config.nodes.map((node) => new HttpNodeAgentGateway(
-      node.id,
-      node.baseUrl,
-      this.requireSecret(node.tokenEnvironmentVariable),
-    ))
+    const gateways = config.nodes.map((node) => new HttpNodeAgentGateway(node.id, node.baseUrl, this.requireSecret(node.tokenEnvironmentVariable)))
     const policies: ServiceRecoveryPolicy[] = config.nodes.flatMap((node) => node.services.map((service) => ({
       nodeId: node.id,
       serviceId: service.id,
@@ -63,25 +53,15 @@ export class RecoveryControlRuntimeBuilder {
     const critic = new StrandsRecoveryPlanCritic(this.bootstrap, agentConfigBuilder, new RecoveryPlanReviewParser())
     const escalationHandler = new RecoveryEscalationHandler(incidentState, investigator, planner, planState, critic)
     const restartBudget = new RecoveryAutomaticRestartBudget()
-    const orchestrator = new RecoveryOrchestrator(
-      new RecoveryPolicyResolver(),
-      incidentState,
-      escalationHandler,
-      restartBudget,
-      this.durabilityCheckpoint,
-    )
+    const orchestrator = new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidentState, escalationHandler, restartBudget, this.durabilityCheckpoint)
     const approvalHandler = new RecoveryPlanApprovalHandler(
       planState,
       incidentState,
-      new RecoveryApprovalVerifier(this.environment['RECOVERY_APPROVAL_TOKEN']),
+      RecoveryApprovalVerifier.fromConfig(config.approvalPrincipals, this.environment, this.environment['RECOVERY_APPROVAL_TOKEN']),
       new ApprovedRecoveryExecutor(gateways, policies),
       this.durabilityCheckpoint,
     )
-    const postmortem = new StrandsRecoveryPostmortem(
-      this.bootstrap,
-      agentConfigBuilder,
-      new RecoveryPostmortemParser(),
-    )
+    const postmortem = new StrandsRecoveryPostmortem(this.bootstrap, agentConfigBuilder, new RecoveryPostmortemParser())
     return new RecoveryControlRuntime(
       gateways,
       policies,
@@ -97,9 +77,7 @@ export class RecoveryControlRuntimeBuilder {
 
   private requireSecret(environmentVariable: string): string {
     const value = this.environment[environmentVariable]?.trim()
-    if (value === undefined || value.length < 16) {
-      throw new Error(`Environment variable ${environmentVariable} must contain a node token of at least 16 characters`)
-    }
+    if (value === undefined || value.length < 16) throw new Error(`Environment variable ${environmentVariable} must contain a node token of at least 16 characters`)
     return value
   }
 }
