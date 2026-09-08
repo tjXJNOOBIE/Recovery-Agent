@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { StrandsAgentRuntimeBootstrap } from '@tjxjnoobie/custom-strands-bridge'
+import { StrandsAgentRuntimeBootstrap } from '@tjxjnoobie/strands-bridge'
 
 import { RecoveryAgentRuntimeConfigBuilder } from '../agent/config/RecoveryAgentRuntimeConfigBuilder.js'
 import { RecoveryControlConfigReader } from '../config/RecoveryControlConfig.js'

@@ -2,7 +2,7 @@ import type {
   IStrandsAgentRuntime,
   IStrandsAgentRuntimeBootstrap,
   StrandsAgentRuntimeConfig,
-} from '@tjxjnoobie/custom-strands-bridge'
+} from '@tjxjnoobie/strands-bridge'
 
 export class FakeStrandsAgentRuntimeBootstrap implements IStrandsAgentRuntimeBootstrap {
   public createCalls = 0

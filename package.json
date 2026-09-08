@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
-    "@tjxjnoobie/custom-strands-bridge": "github:tjXJNOOBIE/strands-bridge#69d27b147ee4f8bf0bfba43cbd0668a1ca4dd868",
+    "@tjxjnoobie/strands-bridge": "github:tjXJNOOBIE/strands-bridge#69d27b147ee4f8bf0bfba43cbd0668a1ca4dd868",
     "zod": "4.5.4"
   },
   "devDependencies": {
