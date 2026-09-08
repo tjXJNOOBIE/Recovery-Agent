@@ -25,6 +25,8 @@ Recovery Agent owns:
 - incident and typed recovery-plan lifecycle;
 - typed node action routing;
 - deterministic verification after mutation;
+- per-target in-flight recovery operation ownership;
+- pending-plan suppression and reconciliation;
 - built-in service-watch lifecycle;
 - MCP tool exposure;
 - the control-host-only approval socket;
@@ -47,6 +49,11 @@ MCP host
   -> official MCP stdio server
       -> RecoveryMcpToolRouter
           -> RecoveryControlRuntime
+              -> RecoveryOperationGate
+                  -> coalesce concurrent recovery for one node/service
+              -> pending RecoveryPlan check
+                  -> unhealthy: return same approval-required plan without mutation
+                  -> healthy: supersede unexecuted plan and resolve incident
               -> HttpNodeAgentGateway
                   -> NodeAgentHttpServer
                       -> SystemdNodeServiceRuntime
@@ -71,28 +78,48 @@ control-host human
 ### Recovery flow
 
 ```text
-inspect service
-  -> healthy: return without mutation
-  -> unhealthy: open incident
-      -> unknown state: refuse mutation and escalate
-      -> restart allowed: execute typed restart
-          -> inspect again
-          -> healthy: resolve incident
-          -> unhealthy and budget remains: retry
-          -> budget exhausted: invoke Strands investigation
-              -> invoke strict bounded planner
-              -> none/invalid proposal: require human intervention
-              -> restart_service proposal: bind target from incident
-                  -> store pending elevated plan
-                  -> MCP may inspect, but cannot approve
-                  -> owner uses control-host approval CLI/socket
-                      -> verify separate approval token
-                      -> execute exactly one typed restart
-                      -> inspect again
-                      -> resolve or return to human_required
+recover node/service
+  -> coalesce with an existing in-flight recovery for the same target
+  -> pending elevated plan exists?
+      -> inspect service only
+      -> still unhealthy: return the existing plan; do not restart or open another incident
+      -> healthy: mark plan superseded without execution; resolve incident
+  -> otherwise inspect service
+      -> healthy: return without mutation
+      -> unhealthy: open incident
+          -> unknown state: refuse mutation and escalate
+          -> restart allowed: execute typed restart
+              -> inspect again
+              -> healthy: resolve incident
+              -> unhealthy and budget remains: retry
+              -> budget exhausted: invoke Strands investigation
+                  -> invoke strict bounded planner
+                  -> none/invalid proposal: require human intervention
+                  -> restart_service proposal: bind target from incident
+                      -> store pending elevated plan
+                      -> MCP may inspect, but cannot approve
+                      -> owner uses control-host approval CLI/socket
+                          -> verify separate approval token
+                          -> execute exactly one typed restart
+                          -> inspect again
+                          -> resolve or return to human_required
 ```
 
 A mutation result never proves recovery. The control host always performs a fresh service inspection after the mutation.
+
+## Recovery Operation and Pending-Plan Barriers
+
+`RecoveryOperationGate` owns only in-flight recovery promises. It is product operation state, not a generic concurrency framework. Calls targeting the same node/service share the same active recovery promise; different targets remain independent. This prevents a manual MCP call and a due watch from starting two recovery flows for the same service at the same time.
+
+A `pending_approval` plan is a second, longer-lived barrier. While a pending plan exists for a node/service:
+
+- automatic recovery does not spend another restart budget;
+- watches and manual recovery calls do not create duplicate incidents or plans;
+- every re-entry performs a fresh read-only service inspection;
+- an unhealthy service returns the same pending plan and incident;
+- if the service recovered externally, the pending plan transitions to `superseded` without execution and its incident resolves.
+
+The barrier ends only when the plan is approved, rejected, failed/executed by the approval path, or superseded by verified external recovery. This prevents an approval queue from accidentally becoming a 30-second restart machine because a watch kept firing. A surprisingly low bar, yet here we are.
 
 ## Node Boundary
 
@@ -184,6 +211,19 @@ The only accepted actions are `restart_service` and `none`. `RecoveryPlanProposa
 
 Node and service identity are copied from the incident by deterministic code; the model never chooses them. A valid restart proposal becomes an `elevated` `RecoveryPlan` with status `pending_approval`.
 
+Plan states currently include:
+
+```text
+pending_approval
+approved
+executed
+rejected
+failed
+superseded
+```
+
+`superseded` means the service recovered and was freshly verified before the pending plan executed. Supersession never invokes the plan action.
+
 ## Human Approval Boundary
 
 The MCP control process creates `RecoveryApprovalSocketServer` only when `RECOVERY_APPROVAL_TOKEN` is configured. The Unix socket is created with mode `0600`. A stale path is removed only when it is a socket owned by the current control-host user; Recovery Agent refuses to remove a regular file or another user's socket.
@@ -218,8 +258,10 @@ Each configured service receives a built-in watch by default. `watchEnabled` may
 Watch invariants:
 
 - only one timer-driven watch cycle executes at a time;
-- an explicit `watch_run` waits for any active cycle before forcing all configured watches;
+- an explicit `watch_run` waits for any active watch cycle before forcing all configured watches;
 - a watch that has not reached its interval is skipped;
+- a watch colliding with another recovery for the same target joins that in-flight operation;
+- a pending elevated plan suppresses additional automatic mutations on later watch cycles;
 - watch errors are recorded instead of terminating future cycles;
 - watch state is process-local and is not incident/audit authority.
 
@@ -246,9 +288,11 @@ The larger planned Strands graph (triage router, specialist investigators, criti
 
 Before production promotion, incident/plan/audit history requires a durable owning boundary with explicit retention, migration, cleanup, and recovery behavior. Recovery Agent must consume the appropriate owning persistence runtime instead of casually reinventing Tavall Database in TypeScript.
 
+`RecoveryOperationGate` is not durable state. It owns only promises for currently executing recovery operations and removes them on completion or failure.
+
 ## Demo
 
-`recovery-agent demo` starts an ephemeral loopback node HTTP server and drives the same control gateway, policy resolver, orchestrator, watch service, incident repository, planner path, and MCP router used by the real runtime.
+`recovery-agent demo` starts an ephemeral loopback node HTTP server and drives the same control gateway, policy resolver, orchestrator, operation gate, watch service, incident repository, planner path, and MCP router used by the real runtime.
 
 The demo uses fake investigation/planning because model-provider access is external. It does not auto-approve the pending elevated plan. Output is labeled `SIMULATED DEMONSTRATION` and must remain distinguishable from physical product/model evidence.
 
@@ -258,6 +302,10 @@ The current local E2E harness covers:
 
 - stopped service -> typed restart -> fresh verification -> incident resolved;
 - repeatedly failing service -> bounded restart budget -> investigation -> strict typed proposal -> pending approval;
+- repeated recovery while a plan is pending -> no extra restart, incident, or plan;
+- external recovery before approval -> pending plan superseded without execution and incident resolved;
+- concurrent recovery for the same target -> one shared in-flight operation;
+- different service targets -> independent concurrent recovery operations;
 - real local HTTP boundary between control gateway and demo node runtime;
 - bearer authentication on the node boundary;
 - recurring service watch due/skip behavior and forced execution;
@@ -284,7 +332,7 @@ This document remains `FINAL_DRAFT`. The following are not yet claimed:
 - production identity-aware approval with attribution, expiry/revocation, durable audit, and richer host-native confirmation;
 - outbound node enrollment, credential rotation, mutual authentication, and production remote transport;
 - Docker/Kubernetes/network/database/Minecraft adapters;
-- recovery budgets/actions beyond bounded systemd restart, including rollback/failover/drain/quarantine/reboot policy;
+- recovery budgets/actions beyond bounded systemd restart, including rolling/time-window budgets, rollback/failover/drain/quarantine/reboot policy;
 - production demo evidence showing real action -> execution -> result/state change on an authorized disposable service.
 
 ## Final Rules Summary
@@ -296,6 +344,8 @@ This document remains `FINAL_DRAFT`. The following are not yet claimed:
 - Model-facing MCP cannot approve or reject elevated plans.
 - Node operations are typed and configured; arbitrary shell execution is not a normal capability.
 - Every mutation is followed by fresh deterministic verification.
+- Concurrent recovery for the same node/service is coalesced into one operation.
+- A pending elevated plan suppresses additional automatic recovery until a human decides it or verified external recovery supersedes it.
 - Built-in service watches reuse the same bounded recovery path as user-triggered recovery.
 - Elevated plans remain inert until approval arrives through the owner-only control-host socket and the separate token is verified.
 - Unknown or exhausted recovery paths escalate instead of looping indefinitely.
