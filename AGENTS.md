@@ -1,6 +1,6 @@
 # Repository instructions
 
-`Recovery-Agent` owns the Recovery Agent product. Shared Strands lifecycle/MCP behavior belongs in `tjXJNOOBIE/custom-strands-bridge`; product behavior stays here.
+`Recovery-Agent` owns the Recovery Agent product. Shared Strands lifecycle/MCP behavior belongs in `tjXJNOOBIE/strands-bridge`; product behavior stays here.
 
 ## Authoritative engineering guidance
 
@@ -29,7 +29,7 @@ Before changing code, architecture, tests, packaging, lifecycle, or documentatio
 
 ## Product boundaries
 
-- Do not depend directly on `@strands-agents/sdk`; consume Strands through `@tjxjnoobie/custom-strands-bridge`.
+- Do not depend directly on `@strands-agents/sdk`; consume Strands through `@tjxjnoobie/strands-bridge`.
 - Do not recreate `tavall-di`, Tavall Cache, Registry, Database, Concurrency, EventBus, Scheduler, or other Java-owned systems in TypeScript. Consume owning runtimes through typed MCP/tool boundaries when needed.
 - Product prompts, permissions, tool exposure, workflows, and user-facing policy belong here.
 - Do not invent MCP operation names or claim integration behavior until it is backed by the connected catalog.
