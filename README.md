@@ -4,7 +4,7 @@ Recovery Agent is a control-host recovery runtime for Linux services. It keeps A
 
 **Agents for Humans track:** Professional
 
-> **Current status:** Draft E2E foundation. Deterministic service recovery, recurring service and Linux node watches, rolling restart budgets, dependency-aware recovery, typed Strands proposals, owner-only human approval, concurrency/suppression barriers, and partial-fleet operation are runnable. Remote production transport, physical npm/Strands/MCP validation, durable audit state, richer watch packs, and broader adapters remain promotion gates.
+> **Current status:** Draft E2E foundation. Deterministic service recovery, application-level HTTP/TCP health probes, recurring service and Linux node watches, rolling restart budgets, dependency-aware recovery, typed Strands proposals, owner-only human approval, concurrency/suppression barriers, and partial-fleet operation are runnable. Remote production transport, physical npm/Strands/MCP validation, durable audit state, richer watch packs, and broader adapters remain promotion gates.
 
 ## Current runtime
 
@@ -15,9 +15,11 @@ MCP host
           -> partial-fleet inspection
           -> node HTTP boundary
               -> fixed systemd service mappings
+              -> fixed HTTP/TCP application probes
               -> Linux resource evidence
           -> recurring service watches
           -> recurring node-resource watches
+              -> memory / swap / disk / inode / load / read-only evidence
               -> deterministic threshold evaluation
               -> node-health incident lifecycle
           -> dependency graph + dependency-first sweeps
@@ -53,9 +55,34 @@ export RECOVERY_NODE_TOKEN_EAST_01='replace-with-a-long-random-secret'
 recovery-agent node ./node.json
 ```
 
-Public service IDs map to configured systemd units. Remote callers cannot supply a unit name or shell command.
+Public service IDs map to configured systemd units. Remote callers cannot supply a unit name, shell command, health URL, or health port.
 
-The production Linux node runtime also exposes deterministic resource evidence through `/v1/node`. `LinuxNodeResourceProbe` reads memory/swap from `/proc/meminfo`, load/CPU/uptime from Node OS APIs, and root-filesystem capacity from `statfs`; it does not execute a shell command.
+Node configuration may attach fixed application probes to a service:
+
+```json
+{
+  "id": "payments-api",
+  "unit": "payments-api.service",
+  "healthChecks": [
+    {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/health",
+      "timeoutMs": 2000,
+      "expectedStatusCodes": [200]
+    },
+    {
+      "type": "tcp",
+      "host": "127.0.0.1",
+      "port": 8080,
+      "timeoutMs": 2000
+    }
+  ]
+}
+```
+
+HTTP/TCP targets are loaded from local node configuration and are not model/MCP arguments. HTTP URLs are restricted to HTTP(S), embedded URL credentials are rejected, timeouts are bounded, and TCP ports are validated. A systemd unit can be `running` while its application probes fail; in that case the service snapshot is unhealthy and includes the probe evidence.
+
+The production Linux node runtime also exposes deterministic resource evidence through `/v1/node`. `LinuxNodeResourceProbe` reads memory/swap from `/proc/meminfo`, load/CPU/uptime from Node OS APIs, root filesystem capacity/inodes from `statfs`, and root mount mode from `/proc/self/mountinfo`; it does not execute a shell command or write a probe file.
 
 The current node HTTP transport defaults to loopback. Do not expose it directly to the public Internet. Remote production use still requires a private network/tunnel or trusted TLS termination until outbound enrollment, mTLS, and credential rotation are implemented.
 
@@ -148,7 +175,9 @@ Every configured node receives a deterministic resource watch. Production snapsh
 
 - memory used percent;
 - swap used percent;
-- root-filesystem used percent;
+- root-filesystem byte used percent;
+- root-filesystem inode used percent when supported;
+- root-filesystem read-only state when determinable;
 - one-minute load average normalized per CPU;
 - uptime.
 
@@ -157,13 +186,17 @@ Default thresholds are intentionally conservative and configurable through the w
 ```text
 memory used                 > 92%
 swap used                   > 80%
-root filesystem used        > 90%
+root filesystem bytes used  > 90%
+root filesystem inodes used > 90%
 1m load average / CPU       > 2.0
+root filesystem read-only   must be false
 ```
+
+Read-only filesystem state is represented as a distinct typed violation, not as a fake numeric threshold. Node Watch can therefore tell the difference between “inode pressure” and “the filesystem literally stopped accepting writes.”
 
 Node Watch states are `healthy`, `degraded`, `unreachable`, and `unsupported`. A degraded or unreachable node opens or updates a process-local node-health incident with the exact violations/evidence. A later healthy observation resolves that incident. Unsupported resource telemetry is recorded explicitly rather than guessed.
 
-Node Watch is **read-only**. Resource pressure does not automatically reboot, drain, or mutate a node. Recovery actions at that risk level remain a separate policy/human-approval problem.
+Node Watch is **read-only**. Resource pressure or a read-only filesystem does not automatically reboot, drain, or mutate a node. Recovery actions at that risk level remain a separate policy/human-approval problem.
 
 `watch_list` returns combined state:
 
@@ -180,7 +213,7 @@ A valid Strands proposal is target-bound by deterministic incident state and sto
 On the control host:
 
 ```bash
-export RECOVERY_APPROVAL_TOKEN='replace-with-a-separate-long-approval-secret'
+export RECOVERY_APPROVAL_TOKEN='replace-with-a-separate-long-secret'
 recovery-agent approve <plan-id>
 recovery-agent reject <plan-id> 'reason'
 ```
@@ -191,7 +224,7 @@ The approval socket defaults to a per-user path under the OS temp directory and 
 
 Configured services are watched by default at a 30-second interval unless disabled. Watches reuse `recoverService`, so rolling budgets, dependency gates, in-flight coalescing, approval suppression, human escalation suppression, Strands escalation, and post-action verification are identical for automatic and user-triggered recovery.
 
-The current service health signal is still systemd lifecycle health. Configured HTTP/TCP health probes are the next implementation slice so an `active` process cannot masquerade as a healthy application merely because systemd has not buried it yet.
+Systemd lifecycle and configured application probes are composed into one service snapshot. When a unit is not running, application probes are skipped. When the unit is running, all configured HTTP/TCP probes must pass for the service to be healthy. Probe failures are evidence for the same bounded recovery path rather than a second recovery implementation.
 
 ## Strands boundary
 
