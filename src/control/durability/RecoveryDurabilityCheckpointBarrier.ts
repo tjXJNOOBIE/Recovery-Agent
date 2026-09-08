@@ -1,8 +1,12 @@
-import type { RecoveryDurableAuditRequest, RecoveryDurableStateCoordinator } from './RecoveryDurableStateCoordinator.js'
+import type {
+  RecoveryDurableAuditRequest,
+  RecoveryDurableCheckpointOverrides,
+  RecoveryDurableStateCoordinator,
+} from './RecoveryDurableStateCoordinator.js'
 
 export interface IRecoveryDurabilityCheckpoint {
   assertMutationAllowed(): void
-  checkpoint(request: RecoveryDurableAuditRequest): Promise<void>
+  checkpoint(request: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<void>
 }
 
 export class RecoveryDurabilityCheckpointBarrier implements IRecoveryDurabilityCheckpoint {
@@ -23,11 +27,14 @@ export class RecoveryDurabilityCheckpointBarrier implements IRecoveryDurabilityC
     if (this.failure !== undefined) throw this.failure
   }
 
-  public async checkpoint(request: RecoveryDurableAuditRequest): Promise<void> {
+  public async checkpoint(
+    request: RecoveryDurableAuditRequest,
+    overrides?: RecoveryDurableCheckpointOverrides,
+  ): Promise<void> {
     this.assertMutationAllowed()
     if (this.coordinator === undefined) return
     try {
-      await this.coordinator.checkpoint(request)
+      await this.coordinator.checkpoint(request, overrides)
     } catch (error: unknown) {
       const cause = error instanceof Error ? error : new Error(String(error))
       const failure = new Error(

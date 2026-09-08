@@ -27,6 +27,10 @@ export interface RecoveryDurableAuditRequest {
   readonly serviceId?: string
 }
 
+export interface RecoveryDurableCheckpointOverrides {
+  readonly semanticWatches?: readonly RecoverySemanticWatchDefinition[]
+}
+
 export type RecoveryDurableClock = () => number
 
 export class RecoveryDurableStateCoordinator {
@@ -84,11 +88,14 @@ export class RecoveryDurableStateCoordinator {
     }
   }
 
-  public checkpoint(auditRequest?: RecoveryDurableAuditRequest): Promise<RecoveryDurableStateResult> {
+  public checkpoint(
+    auditRequest?: RecoveryDurableAuditRequest,
+    overrides?: RecoveryDurableCheckpointOverrides,
+  ): Promise<RecoveryDurableStateResult> {
     this.requireHydrated()
     const run = this.checkpointTail.then(
-      () => this.performCheckpoint(auditRequest),
-      () => this.performCheckpoint(auditRequest),
+      () => this.performCheckpoint(auditRequest, overrides),
+      () => this.performCheckpoint(auditRequest, overrides),
     )
     this.checkpointTail = run.then(() => undefined, () => undefined)
     return run
@@ -99,7 +106,10 @@ export class RecoveryDurableStateCoordinator {
     await this.authority.close()
   }
 
-  private async performCheckpoint(auditRequest?: RecoveryDurableAuditRequest): Promise<RecoveryDurableStateResult> {
+  private async performCheckpoint(
+    auditRequest?: RecoveryDurableAuditRequest,
+    overrides?: RecoveryDurableCheckpointOverrides,
+  ): Promise<RecoveryDurableStateResult> {
     const candidateAudit = auditRequest === undefined
       ? this.audit
       : [...this.audit, this.createAuditEntry(auditRequest)]
@@ -108,7 +118,7 @@ export class RecoveryDurableStateCoordinator {
       schemaVersion: 1,
       incidents: controlState.incidents,
       plans: controlState.plans,
-      semanticWatches: this.semanticWatches.list(),
+      semanticWatches: overrides?.semanticWatches ?? this.semanticWatches.list(),
       restartAttempts: controlState.restartAttempts,
       audit: candidateAudit,
     }

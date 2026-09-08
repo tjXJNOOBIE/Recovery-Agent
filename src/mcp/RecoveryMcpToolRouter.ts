@@ -11,6 +11,7 @@ export class RecoveryMcpToolRouter {
   private readonly watchSurface: RecoveryWatchSurface
   private readonly semanticWatches: RecoverySemanticWatchService | undefined
   private readonly durabilityCheckpoint: IRecoveryDurabilityCheckpoint | undefined
+  private semanticMutationTail: Promise<void> = Promise.resolve()
 
   public constructor(
     controlRuntime: RecoveryControlRuntime,
@@ -53,11 +54,11 @@ export class RecoveryMcpToolRouter {
       case 'service_inspect': return this.controlRuntime.inspectService(this.requireString(args, 'nodeId'), this.requireString(args, 'serviceId'))
       case 'service_recover': return this.controlRuntime.recoverService(this.requireString(args, 'nodeId'), this.requireString(args, 'serviceId'))
       case 'health_sweep': return this.controlRuntime.healthSweep()
-      case 'watch_list': return this.listWatches()
-      case 'watch_run': return this.watchSurface.runAllNow()
-      case 'watch_create': return this.createSemanticWatch(this.requireString(args, 'request'))
-      case 'watch_update': return this.updateSemanticWatch(this.requireString(args, 'watchId'), this.requireString(args, 'request'))
-      case 'watch_remove': return this.removeSemanticWatch(this.requireString(args, 'watchId'))
+      case 'watch_list': return this.listWatchesAfterSemanticMutations()
+      case 'watch_run': return this.runWatchesAfterSemanticMutations()
+      case 'watch_create': return this.enqueueSemanticMutation(() => this.createSemanticWatch(this.requireString(args, 'request')))
+      case 'watch_update': return this.enqueueSemanticMutation(() => this.updateSemanticWatch(this.requireString(args, 'watchId'), this.requireString(args, 'request')))
+      case 'watch_remove': return this.enqueueSemanticMutation(() => this.removeSemanticWatch(this.requireString(args, 'watchId')))
       case 'incident_list': return this.controlRuntime.listIncidents()
       case 'incident_inspect': return this.controlRuntime.inspectIncident(this.requireString(args, 'incidentId'))
       case 'incident_postmortem': return this.controlRuntime.generateIncidentPostmortem(this.requireString(args, 'incidentId'))
@@ -70,61 +71,71 @@ export class RecoveryMcpToolRouter {
   private async createSemanticWatch(request: string): Promise<RecoverySemanticWatchDefinition> {
     const semanticWatches = this.requireSemanticWatches()
     this.durabilityCheckpoint?.assertMutationAllowed()
-    const previous = [...semanticWatches.list()]
-    const created = await semanticWatches.create(request)
-    try {
-      await this.durabilityCheckpoint?.checkpoint({
+    const mutation = await semanticWatches.prepareCreate(request)
+    await this.durabilityCheckpoint?.checkpoint(
+      {
         actor: 'mcp-control-client',
         action: 'semantic_watch_created',
-        summary: `Persisted semantic recovery watch ${created.watchId}`,
-        nodeId: created.nodeId,
-        serviceId: created.serviceId,
-      })
-      return created
-    } catch (error: unknown) {
-      semanticWatches.restore(previous)
-      throw error
-    }
+        summary: `Persisted semantic recovery watch ${mutation.result.watchId}`,
+        nodeId: mutation.result.nodeId,
+        serviceId: mutation.result.serviceId,
+      },
+      { semanticWatches: mutation.definitions },
+    )
+    semanticWatches.restore(mutation.definitions)
+    return mutation.result
   }
 
   private async updateSemanticWatch(watchId: string, request: string): Promise<RecoverySemanticWatchDefinition> {
     const semanticWatches = this.requireSemanticWatches()
     this.durabilityCheckpoint?.assertMutationAllowed()
-    const previous = [...semanticWatches.list()]
-    const updated = await semanticWatches.update(watchId, request)
-    try {
-      await this.durabilityCheckpoint?.checkpoint({
+    const mutation = await semanticWatches.prepareUpdate(watchId, request)
+    await this.durabilityCheckpoint?.checkpoint(
+      {
         actor: 'mcp-control-client',
         action: 'semantic_watch_updated',
-        summary: `Persisted semantic recovery watch update ${updated.watchId}`,
-        nodeId: updated.nodeId,
-        serviceId: updated.serviceId,
-      })
-      return updated
-    } catch (error: unknown) {
-      semanticWatches.restore(previous)
-      throw error
-    }
+        summary: `Persisted semantic recovery watch update ${mutation.result.watchId}`,
+        nodeId: mutation.result.nodeId,
+        serviceId: mutation.result.serviceId,
+      },
+      { semanticWatches: mutation.definitions },
+    )
+    semanticWatches.restore(mutation.definitions)
+    return mutation.result
   }
 
   private async removeSemanticWatch(watchId: string): Promise<RecoverySemanticWatchDefinition> {
     const semanticWatches = this.requireSemanticWatches()
     this.durabilityCheckpoint?.assertMutationAllowed()
-    const previous = [...semanticWatches.list()]
-    const removed = semanticWatches.remove(watchId)
-    try {
-      await this.durabilityCheckpoint?.checkpoint({
+    const mutation = semanticWatches.prepareRemove(watchId)
+    await this.durabilityCheckpoint?.checkpoint(
+      {
         actor: 'mcp-control-client',
         action: 'semantic_watch_removed',
-        summary: `Persisted semantic recovery watch removal ${removed.watchId}`,
-        nodeId: removed.nodeId,
-        serviceId: removed.serviceId,
-      })
-      return removed
-    } catch (error: unknown) {
-      semanticWatches.restore(previous)
-      throw error
-    }
+        summary: `Persisted semantic recovery watch removal ${mutation.result.watchId}`,
+        nodeId: mutation.result.nodeId,
+        serviceId: mutation.result.serviceId,
+      },
+      { semanticWatches: mutation.definitions },
+    )
+    semanticWatches.restore(mutation.definitions)
+    return mutation.result
+  }
+
+  private enqueueSemanticMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.semanticMutationTail.then(operation, operation)
+    this.semanticMutationTail = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  private async listWatchesAfterSemanticMutations(): Promise<unknown> {
+    await this.semanticMutationTail
+    return this.listWatches()
+  }
+
+  private async runWatchesAfterSemanticMutations(): Promise<unknown> {
+    await this.semanticMutationTail
+    return this.watchSurface.runAllNow()
   }
 
   private listWatches(): unknown {

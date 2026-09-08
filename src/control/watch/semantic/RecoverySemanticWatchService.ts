@@ -7,6 +7,11 @@ import type {
   RecoverySemanticWatchTarget,
 } from './RecoverySemanticWatch.js'
 
+export interface RecoverySemanticWatchMutation {
+  readonly result: RecoverySemanticWatchDefinition
+  readonly definitions: readonly RecoverySemanticWatchDefinition[]
+}
+
 export class RecoverySemanticWatchService {
   private readonly compiler: IRecoverySemanticWatchCompiler
   private readonly serviceWatches: RecoveryWatchService
@@ -49,7 +54,7 @@ export class RecoverySemanticWatchService {
     this.definitions = restored
   }
 
-  public async create(request: string): Promise<RecoverySemanticWatchDefinition> {
+  public async prepareCreate(request: string): Promise<RecoverySemanticWatchMutation> {
     const proposal = await this.compiler.compile(request)
     this.requireAllowedTarget(proposal.nodeId, proposal.serviceId)
     const existing = this.findByTarget(proposal.nodeId, proposal.serviceId)
@@ -65,12 +70,10 @@ export class RecoverySemanticWatchService {
       createdAt: now,
       updatedAt: now,
     }
-    this.serviceWatches.upsertOverride(definition)
-    this.definitions = [...this.definitions, definition]
-    return definition
+    return { result: definition, definitions: [...this.definitions, definition] }
   }
 
-  public async update(watchId: string, request: string): Promise<RecoverySemanticWatchDefinition> {
+  public async prepareUpdate(watchId: string, request: string): Promise<RecoverySemanticWatchMutation> {
     const current = this.require(watchId)
     const proposal = await this.compiler.compile(request)
     this.requireAllowedTarget(proposal.nodeId, proposal.serviceId)
@@ -82,16 +85,36 @@ export class RecoverySemanticWatchService {
       rationale: proposal.rationale,
       updatedAt: new Date().toISOString(),
     }
-    this.serviceWatches.upsertOverride(updated)
-    this.definitions = this.definitions.map((definition) => definition.watchId === watchId ? updated : definition)
-    return updated
+    return {
+      result: updated,
+      definitions: this.definitions.map((definition) => definition.watchId === watchId ? updated : definition),
+    }
+  }
+
+  public prepareRemove(watchId: string): RecoverySemanticWatchMutation {
+    const current = this.require(watchId)
+    return {
+      result: current,
+      definitions: this.definitions.filter((definition) => definition.watchId !== current.watchId),
+    }
+  }
+
+  public async create(request: string): Promise<RecoverySemanticWatchDefinition> {
+    const mutation = await this.prepareCreate(request)
+    this.restore(mutation.definitions)
+    return mutation.result
+  }
+
+  public async update(watchId: string, request: string): Promise<RecoverySemanticWatchDefinition> {
+    const mutation = await this.prepareUpdate(watchId, request)
+    this.restore(mutation.definitions)
+    return mutation.result
   }
 
   public remove(watchId: string): RecoverySemanticWatchDefinition {
-    const current = this.require(watchId)
-    this.serviceWatches.clearOverride(current.nodeId, current.serviceId)
-    this.definitions = this.definitions.filter((definition) => definition.watchId !== watchId)
-    return current
+    const mutation = this.prepareRemove(watchId)
+    this.restore(mutation.definitions)
+    return mutation.result
   }
 
   private require(watchId: string): RecoverySemanticWatchDefinition {
