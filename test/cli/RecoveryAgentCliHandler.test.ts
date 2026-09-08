@@ -41,3 +41,36 @@ test('closesRuntimeWhenInvocationFails', async () => {
   await assert.rejects(handler.handle('do the work'), invocationError)
   assert.equal(runtime.closeCalls, 1)
 })
+
+test('aggregatesInvocationAndCleanupFailuresWithoutLosingPrimaryError', async () => {
+  const runtime = new FakeStrandsAgentRuntime('unused')
+  const invocationError = new Error('model failed')
+  const cleanupError = new Error('runtime close failed')
+  runtime.invokeError = invocationError
+  runtime.closeError = cleanupError
+  const bootstrap = new FakeStrandsAgentRuntimeBootstrap(runtime)
+  const handler = new RecoveryAgentCliHandler(bootstrap, new RecoveryAgentRuntimeConfigBuilder({}))
+
+  await assert.rejects(
+    handler.handle('do the work'),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError)
+      assert.deepEqual(error.errors, [invocationError, cleanupError])
+      assert.equal(error.cause, invocationError)
+      return true
+    },
+  )
+  assert.equal(runtime.closeCalls, 1)
+})
+
+test('surfacesCleanupFailureWhenInvocationSucceeds', async () => {
+  const runtime = new FakeStrandsAgentRuntime('complete')
+  const cleanupError = new Error('runtime close failed')
+  runtime.closeError = cleanupError
+  const bootstrap = new FakeStrandsAgentRuntimeBootstrap(runtime)
+  const handler = new RecoveryAgentCliHandler(bootstrap, new RecoveryAgentRuntimeConfigBuilder({}))
+
+  await assert.rejects(handler.handle('do the work'), cleanupError)
+  assert.equal(runtime.invokeCalls, 1)
+  assert.equal(runtime.closeCalls, 1)
+})

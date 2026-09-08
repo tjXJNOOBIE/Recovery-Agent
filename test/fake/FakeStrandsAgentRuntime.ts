@@ -11,6 +11,7 @@ export class FakeStrandsAgentRuntime implements IStrandsAgentRuntime {
   public lastInvokeArgs: InvokeArguments[0] | undefined
   public readonly invokeHistory: InvokeArguments[0][] = []
   public invokeError: unknown | undefined
+  public closeError: unknown | undefined
   private closed = false
   private readonly results: InvokeResult[]
 
@@ -32,5 +33,9 @@ export class FakeStrandsAgentRuntime implements IStrandsAgentRuntime {
   public cancelInvocation(): void {}
   public createAgentTool(agentAsToolOptions?: AgentToolArguments[0]): ReturnType<IStrandsAgentRuntime['createAgentTool']> { void agentAsToolOptions; throw new Error('Fake createAgentTool is not configured for this test.') }
   public isClosed(): boolean { return this.closed }
-  public async close(): Promise<void> { this.closeCalls += 1; this.closed = true }
+  public async close(): Promise<void> {
+    this.closeCalls += 1
+    this.closed = true
+    if (this.closeError !== undefined) throw this.closeError
+  }
 }
