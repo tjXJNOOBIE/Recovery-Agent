@@ -1,3 +1,4 @@
+import type { DeploymentEvidence } from '../deployment/DeploymentEvidence.js'
 import type { ServiceHealthCheckResult } from '../health/ServiceHealthCheck.js'
 import type { NodeResourceSnapshot } from './NodeResourceSnapshot.js'
 
@@ -12,6 +13,7 @@ export interface ServiceSnapshot {
   readonly observedAt: string
   readonly restartCount: number
   readonly healthChecks?: readonly ServiceHealthCheckResult[]
+  readonly deployment?: DeploymentEvidence
 }
 
 export interface NodeSnapshot {

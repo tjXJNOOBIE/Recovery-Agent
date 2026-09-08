@@ -7,6 +7,7 @@
     {
       "id": "payments-api",
       "unit": "payments-api.service",
+      "deploymentMarkerFile": "/opt/payments/deployment.marker",
       "healthChecks": [
         {
           "type": "http",
