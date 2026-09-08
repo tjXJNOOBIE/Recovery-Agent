@@ -1,4 +1,4 @@
-import type { IStrandsAgentRuntime } from '@tjxjnoobie/custom-strands-bridge'
+import type { IStrandsAgentRuntime } from '@tjxjnoobie/strands-bridge'
 
 type InvokeResult = Awaited<ReturnType<IStrandsAgentRuntime['invokeAgent']>>
 type InvokeArguments = Parameters<IStrandsAgentRuntime['invokeAgent']>

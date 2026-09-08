@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from 'node:fs'
-import { StrandsAgentRuntimeBootstrap } from '@tjxjnoobie/custom-strands-bridge'
+import { StrandsAgentRuntimeBootstrap } from '@tjxjnoobie/strands-bridge'
 
 import { RecoveryAgentRuntimeConfigBuilder } from '../agent/config/RecoveryAgentRuntimeConfigBuilder.js'
 import { RecoveryControlConfigReader } from '../config/RecoveryControlConfig.js'

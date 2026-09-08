@@ -1,4 +1,4 @@
-import type { IStrandsAgentRuntimeBootstrap } from '@tjxjnoobie/custom-strands-bridge'
+import type { IStrandsAgentRuntimeBootstrap } from '@tjxjnoobie/strands-bridge'
 
 import type { RecoveryAgentRuntimeConfigBuilder } from '../../agent/config/RecoveryAgentRuntimeConfigBuilder.js'
 import type { IRecoveryPlanCritic, RecoveryPlanReview } from './IRecoveryPlanCritic.js'

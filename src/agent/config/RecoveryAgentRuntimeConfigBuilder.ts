@@ -1,4 +1,4 @@
-import type { StrandsAgentRuntimeConfig } from '@tjxjnoobie/custom-strands-bridge'
+import type { StrandsAgentRuntimeConfig } from '@tjxjnoobie/strands-bridge'
 
 import { RECOVERY_AGENT_SYSTEM_PROMPT } from '../prompt/RecoveryAgentSystemPrompt.js'
 
