@@ -18,10 +18,11 @@ export class RecoveryMcpToolRouter {
 
   public listTools(): readonly McpToolDefinition[] {
     return [
-      { name: 'fleet_status', description: 'Inspect current node and service health.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'fleet_status', description: 'Inspect reachable node/service health and report unreachable nodes without hiding the rest of the fleet.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'node_inspect', description: 'Inspect one configured node.', inputSchema: this.idSchema('nodeId') },
       { name: 'service_inspect', description: 'Inspect one configured service.', inputSchema: this.nodeServiceSchema() },
       { name: 'service_recover', description: 'Run bounded policy-controlled recovery for one configured service.', inputSchema: this.nodeServiceSchema() },
-      { name: 'health_sweep', description: 'Check configured services and recover unhealthy services within policy.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'health_sweep', description: 'Check reachable configured services and recover unhealthy services within policy.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'watch_list', description: 'List configured built-in recovery watches and their latest runtime state.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'watch_run', description: 'Run every configured recovery watch immediately through the same bounded recovery path.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'incident_list', description: 'List recovery incidents from this control runtime.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -34,6 +35,7 @@ export class RecoveryMcpToolRouter {
   public async callTool(name: string, args: Readonly<Record<string, unknown>> = {}): Promise<unknown> {
     switch (name) {
       case 'fleet_status': return this.controlRuntime.fleetStatus()
+      case 'node_inspect': return this.controlRuntime.inspectNode(this.requireString(args, 'nodeId'))
       case 'service_inspect': return this.controlRuntime.inspectService(this.requireString(args, 'nodeId'), this.requireString(args, 'serviceId'))
       case 'service_recover': return this.controlRuntime.recoverService(this.requireString(args, 'nodeId'), this.requireString(args, 'serviceId'))
       case 'health_sweep': return this.controlRuntime.healthSweep()
@@ -67,9 +69,7 @@ export class RecoveryMcpToolRouter {
 
   private requireString(args: Readonly<Record<string, unknown>>, key: string): string {
     const value = args[key]
-    if (typeof value !== 'string' || value.trim().length === 0) {
-      throw new Error(`MCP argument ${key} must be a non-blank string`)
-    }
+    if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`MCP argument ${key} must be a non-blank string`)
     return value.trim()
   }
 }

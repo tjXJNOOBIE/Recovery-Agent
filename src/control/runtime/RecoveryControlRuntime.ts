@@ -5,13 +5,19 @@ import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
 import type { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
 import type { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
-import type { RecoveryServiceDependency, ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
+import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
 import type { RecoveryOperationGate } from '../recovery/RecoveryOperationGate.js'
 import type { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
 import type { RecoveryRunResult } from '../recovery/RecoveryRunResult.js'
 
+export interface UnreachableNodeObservation {
+  readonly nodeId: string
+  readonly error: string
+}
+
 export interface FleetStatusResult {
   readonly nodes: readonly NodeSnapshot[]
+  readonly unreachableNodes: readonly UnreachableNodeObservation[]
   readonly healthyServices: number
   readonly unhealthyServices: number
 }
@@ -41,13 +47,28 @@ export class RecoveryControlRuntime {
   }
 
   public async fleetStatus(): Promise<FleetStatusResult> {
-    const nodes = await Promise.all(this.gateways.map((gateway) => gateway.inspectNode()))
+    const observations = await Promise.all(this.gateways.map(async (gateway) => {
+      try {
+        return { nodeId: gateway.nodeId, snapshot: await gateway.inspectNode() }
+      } catch (error: unknown) {
+        return { nodeId: gateway.nodeId, error: this.errorMessage(error) }
+      }
+    }))
+    const nodes = observations.flatMap((observation) => 'snapshot' in observation ? [observation.snapshot] : [])
+    const unreachableNodes = observations.flatMap((observation) =>
+      'error' in observation ? [{ nodeId: observation.nodeId, error: observation.error }] : []
+    )
     const services = nodes.flatMap((node) => node.services)
     return {
       nodes,
+      unreachableNodes,
       healthyServices: services.filter((service) => service.healthy).length,
       unhealthyServices: services.filter((service) => !service.healthy).length,
     }
+  }
+
+  public inspectNode(nodeId: string): Promise<NodeSnapshot> {
+    return this.requireGateway(nodeId).inspectNode()
   }
 
   public inspectService(nodeId: string, serviceId: string): Promise<ServiceSnapshot> {
@@ -115,9 +136,7 @@ export class RecoveryControlRuntime {
         failures.push(error)
       }
     }
-    if (failures.length > 0) {
-      throw new AggregateError(failures, 'Failed to close one or more node gateways')
-    }
+    if (failures.length > 0) throw new AggregateError(failures, 'Failed to close one or more node gateways')
   }
 
   private async recoverOrRespectSuppression(
@@ -128,7 +147,6 @@ export class RecoveryControlRuntime {
     if (pendingPlan !== undefined) {
       const snapshot = await gateway.inspectService(policy.serviceId)
       let incident = this.incidentRepository.require(pendingPlan.incidentId)
-
       if (this.isHealthy(snapshot, policy)) {
         const supersededPlan = this.planControl.supersede(
           pendingPlan.id,
@@ -142,7 +160,6 @@ export class RecoveryControlRuntime {
         )
         return { status: 'healthy', snapshot, incident, recoveryPlan: supersededPlan, restartAttempts: 0 }
       }
-
       return { status: 'approval_required', snapshot, incident, recoveryPlan: pendingPlan, restartAttempts: 0 }
     }
 
@@ -237,6 +254,10 @@ export class RecoveryControlRuntime {
 
   private targetKey(nodeId: string, serviceId: string): string {
     return `${nodeId}/${serviceId}`
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
   }
 
   private requireGateway(nodeId: string): INodeAgentGateway {
