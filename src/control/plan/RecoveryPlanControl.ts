@@ -31,6 +31,10 @@ export class RecoveryPlanControl {
     return this.planState.transition(planId, 'pending_approval', 'superseded', outcome)
   }
 
+  public failApprovedAfterRestart(planId: string, outcome: string): RecoveryPlan {
+    return this.planState.transition(planId, 'approved', 'failed', outcome)
+  }
+
   public approve(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
     return this.approvalHandler.approveAndExecute(planId, approvalToken)
   }

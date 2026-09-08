@@ -63,7 +63,7 @@ export class RecoveryDurableStateCoordinator {
     this.revision = loaded.revision
     this.audit = loaded.snapshot.audit.map((entry) => ({ ...entry }))
     this.hydrated = true
-    return { revision: this.revision, snapshot: this.currentSnapshot() }
+    return loaded
   }
 
   public currentRevision(): number {
@@ -115,7 +115,7 @@ export class RecoveryDurableStateCoordinator {
     const committed = await this.authority.commit(this.revision, candidate)
     this.revision = committed.revision
     this.audit = committed.snapshot.audit.map((entry) => ({ ...entry }))
-    return { revision: this.revision, snapshot: this.currentSnapshot() }
+    return committed
   }
 
   private createAuditEntry(request: RecoveryDurableAuditRequest): RecoveryDurableAuditEntry {

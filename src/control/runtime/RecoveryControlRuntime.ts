@@ -65,26 +65,49 @@ export class RecoveryControlRuntime {
   }
 
   public restoreDurableState(state: RecoveryControlDurableState): void {
-    const incidentIds = new Set<string>()
+    const configuredTargets = new Set(this.policies.map((policy) => this.targetKey(policy.nodeId, policy.serviceId)))
+    const incidentsById = new Map<string, IncidentRecord>()
     for (const incident of state.incidents) {
-      if (incidentIds.has(incident.id)) throw new Error(`Duplicate recovery incident id during control restore: ${incident.id}`)
-      incidentIds.add(incident.id)
+      if (incidentsById.has(incident.id)) throw new Error(`Duplicate recovery incident id during control restore: ${incident.id}`)
+      const target = this.targetKey(incident.nodeId, incident.serviceId)
+      if (!configuredTargets.has(target)) throw new Error(`Recovery incident ${incident.id} targets unconfigured service ${target}`)
+      incidentsById.set(incident.id, incident)
     }
+
     const pendingTargets = new Set<string>()
     for (const plan of state.plans) {
-      if (!incidentIds.has(plan.incidentId)) {
+      const incident = incidentsById.get(plan.incidentId)
+      if (incident === undefined) {
         throw new Error(`Recovery plan ${plan.id} references unknown incident ${plan.incidentId}`)
       }
+      const target = this.targetKey(plan.nodeId, plan.serviceId)
+      if (!configuredTargets.has(target)) throw new Error(`Recovery plan ${plan.id} targets unconfigured service ${target}`)
+      if (incident.nodeId !== plan.nodeId || incident.serviceId !== plan.serviceId) {
+        throw new Error(`Recovery plan ${plan.id} target ${target} does not match incident ${incident.id} target ${this.targetKey(incident.nodeId, incident.serviceId)}`)
+      }
       if (plan.status === 'pending_approval') {
-        const target = this.targetKey(plan.nodeId, plan.serviceId)
+        if (incident.status !== 'approval_required') {
+          throw new Error(`Pending recovery plan ${plan.id} requires incident ${incident.id} to be approval_required, found ${incident.status}`)
+        }
         if (pendingTargets.has(target)) throw new Error(`Multiple pending recovery plans cannot be restored for ${target}`)
         pendingTargets.add(target)
+      }
+      if (plan.status === 'approved' && incident.status !== 'recovering') {
+        throw new Error(`Approved recovery plan ${plan.id} requires incident ${incident.id} to be recovering, found ${incident.status}`)
+      }
+    }
+
+    for (const [index, attempt] of state.restartAttempts.entries()) {
+      const target = this.targetKey(attempt.nodeId, attempt.serviceId)
+      if (!configuredTargets.has(target)) {
+        throw new Error(`Recovery restart attempt[${index}] targets unconfigured service ${target}`)
       }
     }
 
     this.incidentState.restore(state.incidents)
     this.planControl.restore(state.plans)
     this.recoveryOrchestrator.restoreAutomaticRestartAttempts(state.restartAttempts)
+    this.reconcileInterruptedDurableState()
   }
 
   public exportDurableState(): RecoveryControlDurableState {
@@ -198,12 +221,20 @@ export class RecoveryControlRuntime {
 
   public approveRecoveryPlan(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
     this.durabilityCheckpoint?.assertMutationAllowed()
-    return this.planControl.approve(planId, approvalToken)
+    const plan = this.planControl.inspect(planId)
+    return this.operationGate.runExclusive(plan.nodeId, plan.serviceId, () => {
+      this.durabilityCheckpoint?.assertMutationAllowed()
+      return this.planControl.approve(planId, approvalToken)
+    })
   }
 
   public rejectRecoveryPlan(planId: string, approvalToken: string, reason: string): Promise<RecoveryPlan> {
     this.durabilityCheckpoint?.assertMutationAllowed()
-    return this.planControl.reject(planId, approvalToken, reason)
+    const plan = this.planControl.inspect(planId)
+    return this.operationGate.runExclusive(plan.nodeId, plan.serviceId, () => {
+      this.durabilityCheckpoint?.assertMutationAllowed()
+      return this.planControl.reject(planId, approvalToken, reason)
+    })
   }
 
   public async close(): Promise<void> {
@@ -217,6 +248,34 @@ export class RecoveryControlRuntime {
     }
     if (failures.length > 0) {
       throw new AggregateError(failures, 'Failed to close one or more node gateways')
+    }
+  }
+
+  private reconcileInterruptedDurableState(): void {
+    const reconciledIncidentIds = new Set<string>()
+    for (const plan of [...this.planControl.list()]) {
+      if (plan.status !== 'approved') continue
+      this.planControl.failApprovedAfterRestart(
+        plan.id,
+        'Control host restarted after approval was durably recorded but before a verified execution outcome was durably committed; execution outcome is unknown',
+      )
+      this.incidentState.append(
+        plan.incidentId,
+        'escalated',
+        `Recovery plan ${plan.id} had durable approval but no durable verified outcome after control-host restart; automatic mutation is suppressed until fresh reconciliation`,
+        'human_required',
+      )
+      reconciledIncidentIds.add(plan.incidentId)
+    }
+
+    for (const incident of [...this.incidentState.list()]) {
+      if (incident.status !== 'recovering' || reconciledIncidentIds.has(incident.id)) continue
+      this.incidentState.append(
+        incident.id,
+        'escalated',
+        'Control host restarted while recovery was in progress without a durable terminal outcome; automatic mutation is suppressed until fresh reconciliation',
+        'human_required',
+      )
     }
   }
 
