@@ -13,14 +13,19 @@
           "url": "http://127.0.0.1:8080/health",
           "timeoutMs": 2000,
           "expectedStatusCodes": [200]
-        },
-        {
-          "type": "tcp",
-          "host": "127.0.0.1",
-          "port": 8080,
-          "timeoutMs": 2000
         }
       ]
+    }
+  ],
+  "certificates": [
+    {
+      "id": "payments-public-tls",
+      "host": "payments.example.com",
+      "port": 443,
+      "serverName": "payments.example.com",
+      "timeoutMs": 3000,
+      "warnBeforeDays": 30,
+      "criticalBeforeDays": 7
     }
   ]
 }

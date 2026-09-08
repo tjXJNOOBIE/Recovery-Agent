@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 
+import type { CertificateDefinition } from '../node/certificate/NodeCertificateProbe.js'
 import type { ServiceHealthCheckDefinition } from '../node/health/ServiceHealthCheck.js'
 
 export interface RecoveryNodeServiceConfig {
@@ -14,6 +15,7 @@ export interface RecoveryNodeConfig {
   readonly listenPort: number
   readonly tokenEnvironmentVariable: string
   readonly services: readonly RecoveryNodeServiceConfig[]
+  readonly certificates: readonly CertificateDefinition[]
 }
 
 export class RecoveryNodeConfigReader {
@@ -29,58 +31,56 @@ export class RecoveryNodeConfigReader {
       tokenEnvironmentVariable: this.requireString(record, 'tokenEnvironmentVariable'),
       services: servicesValue.map((value, index) => {
         const service = this.requireRecord(value, `services[${index}]`)
-        return {
-          id: this.requireString(service, 'id'),
-          unit: this.requireString(service, 'unit'),
-          healthChecks: this.readHealthChecks(service, `services[${index}].healthChecks`),
-        }
+        return { id: this.requireString(service, 'id'), unit: this.requireString(service, 'unit'), healthChecks: this.readHealthChecks(service, `services[${index}].healthChecks`) }
       }),
+      certificates: this.readCertificates(record),
     }
   }
 
-  private readHealthChecks(
-    service: Readonly<Record<string, unknown>>,
-    label: string,
-  ): readonly ServiceHealthCheckDefinition[] {
+  private readCertificates(record: Readonly<Record<string, unknown>>): readonly CertificateDefinition[] {
+    const value = record['certificates']
+    if (value === undefined) return []
+    if (!Array.isArray(value)) throw new Error('certificates must be an array when provided')
+    const definitions = value.map((item, index) => {
+      const certificate = this.requireRecord(item, `certificates[${index}]`)
+      const host = this.requireString(certificate, 'host')
+      const warnBeforeDays = this.optionalBoundedPositiveInteger(certificate, 'warnBeforeDays', 3650) ?? 30
+      const criticalBeforeDays = this.optionalNonNegativeInteger(certificate, 'criticalBeforeDays', 3650) ?? 7
+      if (criticalBeforeDays >= warnBeforeDays) throw new Error(`certificates[${index}].criticalBeforeDays must be less than warnBeforeDays`)
+      return {
+        id: this.requireString(certificate, 'id'),
+        host,
+        port: this.optionalTcpPort(certificate, 'port') ?? 443,
+        serverName: this.optionalString(certificate, 'serverName') ?? host,
+        timeoutMs: this.optionalBoundedPositiveInteger(certificate, 'timeoutMs', 60_000) ?? 3_000,
+        warnBeforeDays,
+        criticalBeforeDays,
+      }
+    })
+    if (new Set(definitions.map((definition) => definition.id)).size !== definitions.length) throw new Error('certificate IDs must be unique')
+    return definitions
+  }
+
+  private readHealthChecks(service: Readonly<Record<string, unknown>>, label: string): readonly ServiceHealthCheckDefinition[] {
     const value = service['healthChecks']
     if (value === undefined) return []
     if (!Array.isArray(value)) throw new Error(`${label} must be an array when provided`)
-
     return value.map((checkValue, index) => {
       const record = this.requireRecord(checkValue, `${label}[${index}]`)
       const type = this.requireString(record, 'type')
       const timeoutMs = this.optionalBoundedPositiveInteger(record, 'timeoutMs', 60_000) ?? 2_000
-
-      if (type === 'http') {
-        const url = this.requireHttpUrl(record, 'url')
-        const expectedStatusCodes = this.readExpectedStatusCodes(record, `${label}[${index}].expectedStatusCodes`)
-        return { type: 'http' as const, url, timeoutMs, expectedStatusCodes }
-      }
-
-      if (type === 'tcp') {
-        return {
-          type: 'tcp' as const,
-          host: this.requireString(record, 'host'),
-          port: this.requireTcpPort(record, 'port'),
-          timeoutMs,
-        }
-      }
-
+      if (type === 'http') return { type: 'http' as const, url: this.requireHttpUrl(record, 'url'), timeoutMs, expectedStatusCodes: this.readExpectedStatusCodes(record, `${label}[${index}].expectedStatusCodes`) }
+      if (type === 'tcp') return { type: 'tcp' as const, host: this.requireString(record, 'host'), port: this.requireTcpPort(record, 'port'), timeoutMs }
       throw new Error(`${label}[${index}].type must be http or tcp`)
     })
   }
 
-  private readExpectedStatusCodes(
-    record: Readonly<Record<string, unknown>>,
-    label: string,
-  ): readonly number[] {
+  private readExpectedStatusCodes(record: Readonly<Record<string, unknown>>, label: string): readonly number[] {
     const value = record['expectedStatusCodes']
     if (value === undefined) return [200]
     if (!Array.isArray(value) || value.length === 0) throw new Error(`${label} must be a non-empty array when provided`)
     const statuses = value.map((status) => {
-      if (typeof status !== 'number' || !Number.isInteger(status) || status < 100 || status > 599) {
-        throw new Error(`${label} values must be integer HTTP status codes from 100 through 599`)
-      }
+      if (typeof status !== 'number' || !Number.isInteger(status) || status < 100 || status > 599) throw new Error(`${label} values must be integer HTTP status codes from 100 through 599`)
       return status
     })
     if (new Set(statuses).size !== statuses.length) throw new Error(`${label} must not contain duplicates`)
@@ -90,11 +90,7 @@ export class RecoveryNodeConfigReader {
   private requireHttpUrl(record: Readonly<Record<string, unknown>>, key: string): string {
     const raw = this.requireString(record, key)
     let url: URL
-    try {
-      url = new URL(raw)
-    } catch {
-      throw new Error(`${key} must be a valid HTTP or HTTPS URL`)
-    }
+    try { url = new URL(raw) } catch { throw new Error(`${key} must be a valid HTTP or HTTPS URL`) }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`${key} must use http or https`)
     if (url.username.length > 0 || url.password.length > 0) throw new Error(`${key} must not contain embedded credentials`)
     return url.toString()
@@ -102,10 +98,14 @@ export class RecoveryNodeConfigReader {
 
   private requireTcpPort(record: Readonly<Record<string, unknown>>, key: string): number {
     const value = record[key]
-    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65_535) {
-      throw new Error(`${key} must be a TCP port from 1 through 65535`)
-    }
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65_535) throw new Error(`${key} must be a TCP port from 1 through 65535`)
     return value
+  }
+
+  private optionalTcpPort(record: Readonly<Record<string, unknown>>, key: string): number | undefined {
+    const value = record[key]
+    if (value === undefined) return undefined
+    return this.requireTcpPort(record, key)
   }
 
   private requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
@@ -133,16 +133,17 @@ export class RecoveryNodeConfigReader {
     return value
   }
 
-  private optionalBoundedPositiveInteger(
-    record: Readonly<Record<string, unknown>>,
-    key: string,
-    maximum: number,
-  ): number | undefined {
+  private optionalBoundedPositiveInteger(record: Readonly<Record<string, unknown>>, key: string, maximum: number): number | undefined {
     const value = record[key]
     if (value === undefined) return undefined
-    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0 || value > maximum) {
-      throw new Error(`${key} must be a positive integer no greater than ${maximum}`)
-    }
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0 || value > maximum) throw new Error(`${key} must be a positive integer no greater than ${maximum}`)
+    return value
+  }
+
+  private optionalNonNegativeInteger(record: Readonly<Record<string, unknown>>, key: string, maximum: number): number | undefined {
+    const value = record[key]
+    if (value === undefined) return undefined
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > maximum) throw new Error(`${key} must be a non-negative integer no greater than ${maximum}`)
     return value
   }
 }

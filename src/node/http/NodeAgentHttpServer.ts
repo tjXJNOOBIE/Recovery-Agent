@@ -1,27 +1,26 @@
 import { timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
+import type { INodeCertificateProbe } from '../certificate/NodeCertificateProbe.js'
 import type { INodeResourceProbe } from '../health/INodeResourceProbe.js'
 import type { INodeServiceRuntime } from '../runtime/INodeServiceRuntime.js'
 
-export interface NodeAgentHttpServerAddress {
-  readonly host: string
-  readonly port: number
-  readonly baseUrl: string
-}
+export interface NodeAgentHttpServerAddress { readonly host: string; readonly port: number; readonly baseUrl: string }
 
 export class NodeAgentHttpServer {
   private readonly runtime: INodeServiceRuntime
   private readonly bearerToken: string
   private readonly resourceProbe: INodeResourceProbe | undefined
+  private readonly certificateProbe: INodeCertificateProbe | undefined
   private server: Server | undefined
 
-  public constructor(runtime: INodeServiceRuntime, bearerToken: string, resourceProbe?: INodeResourceProbe) {
+  public constructor(runtime: INodeServiceRuntime, bearerToken: string, resourceProbe?: INodeResourceProbe, certificateProbe?: INodeCertificateProbe) {
     const normalizedToken = bearerToken.trim()
     if (normalizedToken.length < 16) throw new Error('Node bearer token must contain at least 16 non-blank characters')
     this.runtime = runtime
     this.bearerToken = normalizedToken
     this.resourceProbe = resourceProbe
+    this.certificateProbe = certificateProbe
   }
 
   public async listen(port = 0, host = '127.0.0.1'): Promise<NodeAgentHttpServerAddress> {
@@ -41,55 +40,32 @@ export class NodeAgentHttpServer {
     const server = this.server
     this.server = undefined
     if (server === undefined) return
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => error === undefined ? resolve() : reject(error))
-    })
+    await new Promise<void>((resolve, reject) => { server.close((error) => error === undefined ? resolve() : reject(error)) })
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
-      if (!this.isAuthorized(request.headers.authorization)) {
-        this.writeJson(response, 401, { error: 'unauthorized' })
-        return
-      }
-
+      if (!this.isAuthorized(request.headers.authorization)) { this.writeJson(response, 401, { error: 'unauthorized' }); return }
       const url = new URL(request.url ?? '/', 'http://node-agent.local')
       const pathSegments = url.pathname.split('/').filter((segment) => segment.length > 0)
 
       if (request.method === 'GET' && url.pathname === '/v1/node') {
-        const [services, resources] = await Promise.all([
-          this.runtime.listServices(),
-          this.resourceProbe?.inspect(),
-        ])
-        this.writeJson(response, 200, {
-          nodeId: this.runtime.nodeId,
-          observedAt: new Date().toISOString(),
-          services,
-          ...(resources === undefined ? {} : { resources }),
-        })
+        const [services, resources] = await Promise.all([this.runtime.listServices(), this.resourceProbe?.inspect()])
+        this.writeJson(response, 200, { nodeId: this.runtime.nodeId, observedAt: new Date().toISOString(), services, ...(resources === undefined ? {} : { resources }) })
         return
       }
-
-      if (pathSegments.length === 3 && pathSegments[0] === 'v1' && pathSegments[1] === 'services') {
-        const serviceId = decodeURIComponent(pathSegments[2] ?? '')
-        if (request.method === 'GET') {
-          this.writeJson(response, 200, await this.runtime.inspectService(serviceId))
-          return
-        }
-      }
-
-      if (
-        pathSegments.length === 4
-        && pathSegments[0] === 'v1'
-        && pathSegments[1] === 'services'
-        && pathSegments[3] === 'restart'
-        && request.method === 'POST'
-      ) {
-        const serviceId = decodeURIComponent(pathSegments[2] ?? '')
-        this.writeJson(response, 200, await this.runtime.restartService(serviceId))
+      if (request.method === 'GET' && url.pathname === '/v1/certificates') {
+        this.writeJson(response, 200, await this.certificateProbe?.listCertificates() ?? [])
         return
       }
-
+      if (pathSegments.length === 3 && pathSegments[0] === 'v1' && pathSegments[1] === 'services' && request.method === 'GET') {
+        this.writeJson(response, 200, await this.runtime.inspectService(decodeURIComponent(pathSegments[2] ?? '')))
+        return
+      }
+      if (pathSegments.length === 4 && pathSegments[0] === 'v1' && pathSegments[1] === 'services' && pathSegments[3] === 'restart' && request.method === 'POST') {
+        this.writeJson(response, 200, await this.runtime.restartService(decodeURIComponent(pathSegments[2] ?? '')))
+        return
+      }
       this.writeJson(response, 404, { error: 'not_found' })
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
