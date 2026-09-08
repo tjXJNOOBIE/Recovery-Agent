@@ -1,6 +1,7 @@
 import { ApprovedRecoveryExecutor } from '../../src/control/approval/ApprovedRecoveryExecutor.js'
 import { RecoveryApprovalVerifier } from '../../src/control/approval/RecoveryApprovalVerifier.js'
 import { RecoveryPlanApprovalHandler } from '../../src/control/approval/RecoveryPlanApprovalHandler.js'
+import { RecoveryAutomaticRestartBudget } from '../../src/control/budget/RecoveryAutomaticRestartBudget.js'
 import { InMemoryIncidentRepository } from '../../src/control/incident/repository/InMemoryIncidentRepository.js'
 import type { IRecoveryInvestigator } from '../../src/control/investigation/IRecoveryInvestigator.js'
 import { RecoveryPolicyResolver } from '../../src/control/policy/RecoveryPolicyResolver.js'
@@ -29,11 +30,12 @@ export function buildRecoveryTestGraph(
   investigator: IRecoveryInvestigator,
   planner: IRecoveryPlanner = new FakeRecoveryPlanner(),
   approvalToken = 'test-approval-token-1234',
+  restartBudget: RecoveryAutomaticRestartBudget = new RecoveryAutomaticRestartBudget(),
 ): RecoveryTestGraph {
   const incidents = new InMemoryIncidentRepository()
   const plans = new InMemoryRecoveryPlanRepository()
   const escalation = new RecoveryEscalationHandler(incidents, investigator, planner, plans)
-  const orchestrator = new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, escalation)
+  const orchestrator = new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, escalation, restartBudget)
   const planControl = new RecoveryPlanControl(
     plans,
     new RecoveryPlanApprovalHandler(

@@ -6,6 +6,7 @@ import { HttpNodeAgentGateway } from '../../node/http/HttpNodeAgentGateway.js'
 import { ApprovedRecoveryExecutor } from '../approval/ApprovedRecoveryExecutor.js'
 import { RecoveryApprovalVerifier } from '../approval/RecoveryApprovalVerifier.js'
 import { RecoveryPlanApprovalHandler } from '../approval/RecoveryPlanApprovalHandler.js'
+import { RecoveryAutomaticRestartBudget } from '../budget/RecoveryAutomaticRestartBudget.js'
 import { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
 import { StrandsRecoveryInvestigator } from '../investigation/StrandsRecoveryInvestigator.js'
 import { RecoveryPolicyResolver } from '../policy/RecoveryPolicyResolver.js'
@@ -36,6 +37,7 @@ export class RecoveryControlRuntimeBuilder {
       expectedState: 'running' as const,
       restartAllowed: service.restartAllowed,
       maxRestartAttempts: service.maxRestartAttempts,
+      restartBudgetWindowMs: service.restartBudgetWindowSeconds * 1_000,
     })))
     const incidentRepository = new InMemoryIncidentRepository()
     const planRepository = new InMemoryRecoveryPlanRepository()
@@ -43,7 +45,12 @@ export class RecoveryControlRuntimeBuilder {
     const investigator = new StrandsRecoveryInvestigator(this.bootstrap, agentConfigBuilder)
     const planner = new StrandsRecoveryPlanner(this.bootstrap, agentConfigBuilder, new RecoveryPlanProposalParser())
     const escalationHandler = new RecoveryEscalationHandler(incidentRepository, investigator, planner, planRepository)
-    const orchestrator = new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidentRepository, escalationHandler)
+    const orchestrator = new RecoveryOrchestrator(
+      new RecoveryPolicyResolver(),
+      incidentRepository,
+      escalationHandler,
+      new RecoveryAutomaticRestartBudget(),
+    )
     const approvalHandler = new RecoveryPlanApprovalHandler(
       planRepository,
       incidentRepository,

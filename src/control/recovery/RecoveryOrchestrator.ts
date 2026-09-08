@@ -1,4 +1,5 @@
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
+import type { RecoveryAutomaticRestartBudget } from '../budget/RecoveryAutomaticRestartBudget.js'
 import type { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
 import type { RecoveryPolicyResolver } from '../policy/RecoveryPolicyResolver.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
@@ -9,15 +10,18 @@ export class RecoveryOrchestrator {
   private readonly policyResolver: RecoveryPolicyResolver
   private readonly incidentRepository: InMemoryIncidentRepository
   private readonly escalationHandler: RecoveryEscalationHandler
+  private readonly restartBudget: RecoveryAutomaticRestartBudget
 
   public constructor(
     policyResolver: RecoveryPolicyResolver,
     incidentRepository: InMemoryIncidentRepository,
     escalationHandler: RecoveryEscalationHandler,
+    restartBudget: RecoveryAutomaticRestartBudget,
   ) {
     this.policyResolver = policyResolver
     this.incidentRepository = incidentRepository
     this.escalationHandler = escalationHandler
+    this.restartBudget = restartBudget
   }
 
   public async recover(gateway: INodeAgentGateway, policy: ServiceRecoveryPolicy): Promise<RecoveryRunResult> {
@@ -42,9 +46,27 @@ export class RecoveryOrchestrator {
     let restartAttempts = 0
 
     if (decision === 'restart') {
-      for (let attempt = 1; attempt <= policy.maxRestartAttempts; attempt += 1) {
-        restartAttempts = attempt
-        incident = this.incidentRepository.append(incident.id, 'action', `Restart attempt ${attempt} requested`, 'recovering')
+      for (let candidateAttempt = 1; candidateAttempt <= policy.maxRestartAttempts; candidateAttempt += 1) {
+        const budgetDecision = this.restartBudget.tryConsume(policy)
+        if (!budgetDecision.allowed) {
+          const budget = budgetDecision.snapshot
+          incident = this.incidentRepository.append(
+            incident.id,
+            'action',
+            `Automatic restart budget exhausted: ${budget.usedAttempts}/${budget.maximumAttempts} attempt(s) used in ${budget.windowMs}ms; no restart executed`,
+            'recovering',
+          )
+          break
+        }
+
+        restartAttempts += 1
+        const budget = budgetDecision.snapshot
+        incident = this.incidentRepository.append(
+          incident.id,
+          'action',
+          `Restart attempt ${restartAttempts} requested; automatic rolling budget ${budget.usedAttempts}/${budget.maximumAttempts} in ${budget.windowMs}ms`,
+          'recovering',
+        )
         const actionResult = await gateway.restartService(policy.serviceId)
         currentSnapshot = await gateway.inspectService(policy.serviceId)
         incident = this.incidentRepository.append(

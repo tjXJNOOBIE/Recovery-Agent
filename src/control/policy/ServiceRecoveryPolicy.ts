@@ -4,6 +4,7 @@ export interface ServiceRecoveryPolicy {
   readonly expectedState: 'running'
   readonly restartAllowed: boolean
   readonly maxRestartAttempts: number
+  readonly restartBudgetWindowMs?: number
 }
 
 export type RecoveryDecision = 'healthy' | 'restart' | 'investigate' | 'human'

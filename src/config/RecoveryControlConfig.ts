@@ -4,6 +4,7 @@ export interface RecoveryControlServiceConfig {
   readonly id: string
   readonly restartAllowed: boolean
   readonly maxRestartAttempts: number
+  readonly restartBudgetWindowSeconds: number
   readonly watchEnabled: boolean
   readonly watchIntervalSeconds: number
 }
@@ -40,6 +41,7 @@ export class RecoveryControlConfigReader {
               id: this.requireString(service, 'id'),
               restartAllowed: this.requireBoolean(service, 'restartAllowed'),
               maxRestartAttempts: this.requireNonNegativeInteger(service, 'maxRestartAttempts'),
+              restartBudgetWindowSeconds: this.optionalPositiveInteger(service, 'restartBudgetWindowSeconds') ?? 600,
               watchEnabled: this.optionalBoolean(service, 'watchEnabled') ?? true,
               watchIntervalSeconds: this.optionalPositiveInteger(service, 'watchIntervalSeconds') ?? 30,
             }

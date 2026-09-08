@@ -7,7 +7,7 @@ import test from 'node:test'
 import { RecoveryControlConfigReader } from '../../src/config/RecoveryControlConfig.js'
 import { RecoveryWatchDefinitionBuilder } from '../../src/control/watch/RecoveryWatchDefinitionBuilder.js'
 
-test('enablesBuiltInServiceWatchByDefaultAndBuildsItsInterval', () => {
+test('enablesBuiltInServiceWatchAndRollingBudgetWindowByDefault', () => {
   const directory = mkdtempSync(join(tmpdir(), 'recovery-config-'))
   const path = join(directory, 'control.json')
   writeFileSync(path, JSON.stringify({
@@ -21,6 +21,7 @@ test('enablesBuiltInServiceWatchByDefaultAndBuildsItsInterval', () => {
 
   const config = new RecoveryControlConfigReader().read(path)
   const service = config.nodes[0]?.services[0]
+  assert.equal(service?.restartBudgetWindowSeconds, 600)
   assert.equal(service?.watchEnabled, true)
   assert.equal(service?.watchIntervalSeconds, 30)
   assert.deepEqual(new RecoveryWatchDefinitionBuilder().build(config), [
@@ -28,7 +29,7 @@ test('enablesBuiltInServiceWatchByDefaultAndBuildsItsInterval', () => {
   ])
 })
 
-test('allowsAServiceWatchToBeDisabledExplicitly', () => {
+test('allowsServiceWatchAndRestartBudgetWindowOverrides', () => {
   const directory = mkdtempSync(join(tmpdir(), 'recovery-config-'))
   const path = join(directory, 'control.json')
   writeFileSync(path, JSON.stringify({
@@ -40,6 +41,7 @@ test('allowsAServiceWatchToBeDisabledExplicitly', () => {
         id: 'worker',
         restartAllowed: true,
         maxRestartAttempts: 2,
+        restartBudgetWindowSeconds: 120,
         watchEnabled: false,
         watchIntervalSeconds: 5,
       }],
@@ -47,5 +49,6 @@ test('allowsAServiceWatchToBeDisabledExplicitly', () => {
   }))
 
   const config = new RecoveryControlConfigReader().read(path)
+  assert.equal(config.nodes[0]?.services[0]?.restartBudgetWindowSeconds, 120)
   assert.deepEqual(new RecoveryWatchDefinitionBuilder().build(config), [])
 })

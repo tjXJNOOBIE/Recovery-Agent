@@ -1,6 +1,7 @@
 import { ApprovedRecoveryExecutor } from '../control/approval/ApprovedRecoveryExecutor.js'
 import { RecoveryApprovalVerifier } from '../control/approval/RecoveryApprovalVerifier.js'
 import { RecoveryPlanApprovalHandler } from '../control/approval/RecoveryPlanApprovalHandler.js'
+import { RecoveryAutomaticRestartBudget } from '../control/budget/RecoveryAutomaticRestartBudget.js'
 import { InMemoryIncidentRepository } from '../control/incident/repository/InMemoryIncidentRepository.js'
 import type { IRecoveryInvestigator, RecoveryInvestigationRequest, RecoveryInvestigationResult } from '../control/investigation/IRecoveryInvestigator.js'
 import { RecoveryPolicyResolver } from '../control/policy/RecoveryPolicyResolver.js'
@@ -61,8 +62,8 @@ export class RecoveryDemoHandler {
     const incidents = new InMemoryIncidentRepository()
     const plans = new InMemoryRecoveryPlanRepository()
     const policies: readonly ServiceRecoveryPolicy[] = [
-      { nodeId: 'demo-east', serviceId: 'worker', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 2 },
-      { nodeId: 'demo-east', serviceId: 'payments', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 1 },
+      { nodeId: 'demo-east', serviceId: 'worker', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 2, restartBudgetWindowMs: 600_000 },
+      { nodeId: 'demo-east', serviceId: 'payments', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 1, restartBudgetWindowMs: 600_000 },
     ]
     const escalationHandler = new RecoveryEscalationHandler(
       incidents,
@@ -82,7 +83,12 @@ export class RecoveryDemoHandler {
     const control = new RecoveryControlRuntime(
       [gateway],
       policies,
-      new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, escalationHandler),
+      new RecoveryOrchestrator(
+        new RecoveryPolicyResolver(),
+        incidents,
+        escalationHandler,
+        new RecoveryAutomaticRestartBudget(),
+      ),
       incidents,
       planControl,
       new RecoveryOperationGate(),

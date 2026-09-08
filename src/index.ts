@@ -16,6 +16,8 @@ export { SystemdNodeServiceRuntime } from './node/systemd/SystemdNodeServiceRunt
 export { RecoveryWatchDefinitionBuilder } from './control/watch/RecoveryWatchDefinitionBuilder.js'
 export type { RecoveryWatchDefinition, RecoveryWatchRunStatus, RecoveryWatchState } from './control/watch/RecoveryWatchDefinition.js'
 export { RecoveryWatchService } from './control/watch/RecoveryWatchService.js'
+export { DEFAULT_AUTOMATIC_RESTART_BUDGET_WINDOW_MS, RecoveryAutomaticRestartBudget } from './control/budget/RecoveryAutomaticRestartBudget.js'
+export type { RecoveryAutomaticRestartBudgetDecision, RecoveryAutomaticRestartBudgetSnapshot, RecoveryClock } from './control/budget/RecoveryAutomaticRestartBudget.js'
 
 export { RecoveryPlanProposalParser } from './control/plan/RecoveryPlanProposalParser.js'
 export { StrandsRecoveryPlanner } from './control/plan/StrandsRecoveryPlanner.js'
