@@ -65,3 +65,7 @@ export { RecoveryApprovalVerifier } from './control/approval/RecoveryApprovalVer
 export { RecoveryApprovalSocketClient } from './control/approval/socket/RecoveryApprovalSocketClient.js'
 export { RecoveryApprovalSocketPathResolver } from './control/approval/socket/RecoveryApprovalSocketPathResolver.js'
 export { RecoveryApprovalSocketServer } from './control/approval/socket/RecoveryApprovalSocketServer.js'
+export type { IRecoveryStateAuthority, RecoveryDurableAuditEntry, RecoveryDurableRestartAttempt, RecoveryDurableSnapshot, RecoveryDurableStateResult } from './control/durability/RecoveryDurableState.js'
+export { RecoveryDurableStateParser, RecoveryStateAuthorityError, RecoveryStateStaleRevisionError } from './control/durability/RecoveryDurableStateParser.js'
+export { RecoveryStateAuthorityProcessClient } from './control/durability/RecoveryStateAuthorityProcessClient.js'
+export type { RecoveryStateAuthorityProcessConfig } from './control/durability/RecoveryStateAuthorityProcessClient.js'
