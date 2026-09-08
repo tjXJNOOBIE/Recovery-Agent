@@ -30,6 +30,25 @@ export class RecoveryIncidentRuntimeState {
     return next
   }
 
+  public restore(incidents: readonly IncidentRecord[]): void {
+    const seen = new Set<string>()
+    const restored = incidents.map((incident, index) => {
+      const id = incident.id.trim()
+      if (id.length === 0) throw new Error(`Recovery incident[${index}] id must be non-blank`)
+      if (seen.has(id)) throw new Error(`Duplicate recovery incident id during restore: ${id}`)
+      if (incident.timeline.length === 0) throw new Error(`Recovery incident ${id} timeline must be non-empty`)
+      seen.add(id)
+      return {
+        ...incident,
+        id,
+        nodeId: incident.nodeId.trim(),
+        serviceId: incident.serviceId.trim(),
+        timeline: incident.timeline.map((entry) => ({ ...entry })),
+      }
+    })
+    this.incidents = restored
+  }
+
   public list(): readonly IncidentRecord[] {
     return this.incidents
   }

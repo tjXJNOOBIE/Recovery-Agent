@@ -16,7 +16,7 @@ export interface RecoveryAutomaticRestartBudgetDecision {
   readonly snapshot: RecoveryAutomaticRestartBudgetSnapshot
 }
 
-interface RecoveryAutomaticRestartAttempt {
+export interface RecoveryAutomaticRestartAttempt {
   readonly nodeId: string
   readonly serviceId: string
   readonly atMs: number
@@ -59,6 +59,14 @@ export class RecoveryAutomaticRestartBudget {
     }
   }
 
+  public restoreAttempts(attempts: readonly RecoveryAutomaticRestartAttempt[]): void {
+    this.attempts = attempts.map((attempt, index) => this.validateAttempt(attempt, index))
+  }
+
+  public listAttempts(): readonly RecoveryAutomaticRestartAttempt[] {
+    return this.attempts.map((attempt) => ({ ...attempt }))
+  }
+
   private snapshot(policy: ServiceRecoveryPolicy, nowMs: number): RecoveryAutomaticRestartBudgetSnapshot {
     this.validateMaximumAttempts(policy.maxRestartAttempts)
     const windowMs = this.resolveWindowMs(policy)
@@ -96,6 +104,18 @@ export class RecoveryAutomaticRestartBudget {
     if (!Number.isInteger(maximumAttempts) || maximumAttempts < 0) {
       throw new Error('Automatic restart budget maximum attempts must be a non-negative integer')
     }
+  }
+
+  private validateAttempt(attempt: RecoveryAutomaticRestartAttempt, index: number): RecoveryAutomaticRestartAttempt {
+    const nodeId = attempt.nodeId.trim()
+    const serviceId = attempt.serviceId.trim()
+    if (nodeId.length === 0 || serviceId.length === 0) {
+      throw new Error(`Recovery restart attempt[${index}] target must be non-blank`)
+    }
+    if (!Number.isSafeInteger(attempt.atMs) || attempt.atMs < 0) {
+      throw new Error(`Recovery restart attempt[${index}] atMs must be a non-negative safe integer`)
+    }
+    return { nodeId, serviceId, atMs: attempt.atMs }
   }
 
   private now(): number {

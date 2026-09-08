@@ -1,5 +1,9 @@
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
-import type { RecoveryAutomaticRestartBudget, RecoveryAutomaticRestartBudgetSnapshot } from '../budget/RecoveryAutomaticRestartBudget.js'
+import type {
+  RecoveryAutomaticRestartAttempt,
+  RecoveryAutomaticRestartBudget,
+  RecoveryAutomaticRestartBudgetSnapshot,
+} from '../budget/RecoveryAutomaticRestartBudget.js'
 import type { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { RecoveryPolicyResolver } from '../policy/RecoveryPolicyResolver.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
@@ -26,6 +30,14 @@ export class RecoveryOrchestrator {
 
   public inspectAutomaticRestartBudget(policy: ServiceRecoveryPolicy): RecoveryAutomaticRestartBudgetSnapshot {
     return this.restartBudget.inspect(policy)
+  }
+
+  public restoreAutomaticRestartAttempts(attempts: readonly RecoveryAutomaticRestartAttempt[]): void {
+    this.restartBudget.restoreAttempts(attempts)
+  }
+
+  public listAutomaticRestartAttempts(): readonly RecoveryAutomaticRestartAttempt[] {
+    return this.restartBudget.listAttempts()
   }
 
   public async recover(gateway: INodeAgentGateway, policy: ServiceRecoveryPolicy): Promise<RecoveryRunResult> {

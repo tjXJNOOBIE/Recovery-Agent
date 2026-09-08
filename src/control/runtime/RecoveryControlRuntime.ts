@@ -2,6 +2,7 @@ import type { CertificateSnapshot } from '../../node/certificate/CertificateSnap
 import type { NodeSnapshot, ServiceSnapshot } from '../../node/data/ServiceSnapshot.js'
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
 import type { RecoveryPlanApprovalResult } from '../approval/RecoveryPlanApprovalHandler.js'
+import type { RecoveryAutomaticRestartAttempt } from '../budget/RecoveryAutomaticRestartBudget.js'
 import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
 import type { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
@@ -16,6 +17,12 @@ import type { RecoveryRunResult } from '../recovery/RecoveryRunResult.js'
 
 export interface UnreachableNodeObservation { readonly nodeId: string; readonly error: string }
 export interface FleetStatusResult { readonly nodes: readonly NodeSnapshot[]; readonly unreachableNodes: readonly UnreachableNodeObservation[]; readonly healthyServices: number; readonly unhealthyServices: number }
+
+export interface RecoveryControlDurableState {
+  readonly incidents: readonly IncidentRecord[]
+  readonly plans: readonly RecoveryPlan[]
+  readonly restartAttempts: readonly RecoveryAutomaticRestartAttempt[]
+}
 
 export class RecoveryControlRuntime {
   private readonly gateways: readonly INodeAgentGateway[]
@@ -51,6 +58,37 @@ export class RecoveryControlRuntime {
       this.planControl,
     )
     this.postmortemGenerator = postmortemGenerator
+  }
+
+  public restoreDurableState(state: RecoveryControlDurableState): void {
+    const incidentIds = new Set<string>()
+    for (const incident of state.incidents) {
+      if (incidentIds.has(incident.id)) throw new Error(`Duplicate recovery incident id during control restore: ${incident.id}`)
+      incidentIds.add(incident.id)
+    }
+    const pendingTargets = new Set<string>()
+    for (const plan of state.plans) {
+      if (!incidentIds.has(plan.incidentId)) {
+        throw new Error(`Recovery plan ${plan.id} references unknown incident ${plan.incidentId}`)
+      }
+      if (plan.status === 'pending_approval') {
+        const target = this.targetKey(plan.nodeId, plan.serviceId)
+        if (pendingTargets.has(target)) throw new Error(`Multiple pending recovery plans cannot be restored for ${target}`)
+        pendingTargets.add(target)
+      }
+    }
+
+    this.incidentState.restore(state.incidents)
+    this.planControl.restore(state.plans)
+    this.recoveryOrchestrator.restoreAutomaticRestartAttempts(state.restartAttempts)
+  }
+
+  public exportDurableState(): RecoveryControlDurableState {
+    return {
+      incidents: this.incidentState.list(),
+      plans: this.planControl.list(),
+      restartAttempts: this.recoveryOrchestrator.listAutomaticRestartAttempts(),
+    }
   }
 
   public async fleetStatus(): Promise<FleetStatusResult> {

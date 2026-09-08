@@ -11,6 +11,10 @@ export class RecoveryPlanControl {
     this.approvalHandler = approvalHandler
   }
 
+  public restore(plans: readonly RecoveryPlan[]): void {
+    this.planState.restore(plans)
+  }
+
   public list(): readonly RecoveryPlan[] {
     return this.planState.list()
   }
