@@ -16,10 +16,13 @@ export const DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS: RecoveryNodeResourceThre
   maxLoadAverage1mPerCpu: 2,
 }
 
+export const DEFAULT_RECOVERY_NODE_MAX_CLOCK_DRIFT_MS = 30_000
+
 export interface RecoveryNodeWatchDefinition {
   readonly nodeId: string
   readonly intervalMs: number
   readonly thresholds: RecoveryNodeResourceThresholds
+  readonly maxClockDriftMs?: number
 }
 
 export type RecoveryNodeNumericResourceMetric =
@@ -28,6 +31,7 @@ export type RecoveryNodeNumericResourceMetric =
   | 'root_filesystem_used_percent'
   | 'root_filesystem_inode_used_percent'
   | 'load_average_1m_per_cpu'
+  | 'node_clock_drift_ms'
 
 export type RecoveryNodeResourceMetric = RecoveryNodeNumericResourceMetric | 'root_filesystem_read_only'
 
@@ -54,6 +58,8 @@ export interface RecoveryNodeWatchState {
   readonly lastStartedAt?: string
   readonly lastCompletedAt?: string
   readonly resources?: NodeResourceSnapshot
+  readonly clockDriftMs?: number
+  readonly requestRoundTripMs?: number
   readonly violations: readonly RecoveryNodeResourceViolation[]
   readonly incidentId?: string
   readonly lastError?: string
