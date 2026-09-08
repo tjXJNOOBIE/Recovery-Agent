@@ -94,6 +94,8 @@ export class NodeCertificateProbe implements INodeCertificateProbe {
     const daysRemaining = Number.isFinite(validToMs)
       ? Math.round(((validToMs - this.clock()) / 86_400_000) * 100) / 100
       : undefined
+    const subject = this.commonName(certificate.subject?.CN)
+    const issuer = this.commonName(certificate.issuer?.CN)
 
     return {
       ...base,
@@ -102,11 +104,20 @@ export class NodeCertificateProbe implements INodeCertificateProbe {
       ...(daysRemaining === undefined ? {} : { daysRemaining }),
       ...(Number.isFinite(validFromMs) ? { validFrom: new Date(validFromMs).toISOString() } : {}),
       ...(Number.isFinite(validToMs) ? { validTo: new Date(validToMs).toISOString() } : {}),
-      ...(certificate.subject?.CN === undefined ? {} : { subject: certificate.subject.CN }),
-      ...(certificate.issuer?.CN === undefined ? {} : { issuer: certificate.issuer.CN }),
+      ...(subject === undefined ? {} : { subject }),
+      ...(issuer === undefined ? {} : { issuer }),
       ...(certificate.fingerprint256 === undefined ? {} : { fingerprint256: certificate.fingerprint256 }),
       ...(socket.authorized ? {} : { authorizationError: this.authorizationError(socket) ?? 'TLS certificate is not authorized' }),
     }
+  }
+
+  private commonName(value: string | readonly string[] | undefined): string | undefined {
+    if (value === undefined) return undefined
+    const normalized = (Array.isArray(value) ? value : [value])
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .join(', ')
+    return normalized.length === 0 ? undefined : normalized
   }
 
   private authorizationError(socket: TLSSocket): string | undefined {
