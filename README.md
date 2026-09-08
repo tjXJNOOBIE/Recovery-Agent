@@ -1,39 +1,45 @@
 # Recovery Agent
 
-Recovery Agent is a control-host recovery runtime for Linux services. It keeps AI execution away from production nodes: ChatGPT, Claude, Codex, or another MCP host talks to one control runtime, while production machines expose only narrow typed health and recovery operations.
+Recovery Agent is a control-host recovery runtime for Linux services. AI stays away from production nodes: ChatGPT, Claude, Codex, or another MCP host talks to one control runtime, while production machines expose only narrow typed observation and recovery operations.
 
 **Agents for Humans track:** Professional
 
-> **Current status:** Draft E2E foundation. Deterministic service recovery, application-level HTTP/TCP health probes, service/node/readiness watches, rolling restart budgets, dependency-aware recovery, typed Strands proposals, owner-only human approval, concurrency/suppression barriers, and partial-fleet operation are runnable. Remote production transport, physical npm/Strands/MCP validation, durable audit state, richer watch packs, and broader adapters remain promotion gates.
+> **Status:** Draft E2E foundation. Deterministic service recovery, Linux/node/application/certificate/deployment/readiness watches, bounded Strands investigation/planning/critique, human approval, and structured postmortems are implemented. Physical external-package/model validation, durable authority, production remote transport, broader adapters, and richer recovery actions remain promotion gates.
 
-## Current runtime
+## Product rule
+
+> **Deterministic software observes, authorizes, budgets, orders, executes, and verifies. Strands interprets, investigates, plans, critiques, and explains.**
+
+The model never becomes the mutation or authorization boundary.
+
+## Current topology
 
 ```text
 MCP host
   -> Recovery MCP server
       -> deterministic control runtime
           -> partial-fleet inspection
-          -> recovery readiness inspection
-          -> node HTTP boundary
-              -> fixed systemd service mappings
-              -> fixed HTTP/TCP application probes
-              -> Linux resource evidence
-          -> recurring node-resource watches
-              -> memory / swap / disk / inode / load / read-only evidence
-              -> node-health incident lifecycle
-          -> recurring service watches
-          -> recurring recovery-readiness watch
-          -> dependency graph + dependency-first sweeps
-          -> rolling automatic restart budget
-          -> per-target in-flight recovery coalescing
-          -> pending-plan / human-required suppression
-          -> fresh verification after every mutation
-          -> Strands investigation + strict typed proposal after deterministic exhaustion
+          -> recovery readiness
+          -> combined watches
+              -> Linux node/resource/filesystem/clock
+              -> TLS certificates
+              -> deployment correlation
+              -> service/systemd + HTTP/TCP application health
+              -> recovery readiness
+          -> dependency graph + ordered health sweep
+          -> rolling restart budgets
+          -> suppression / in-flight barriers
+          -> bounded recovery + fresh verification
+          -> Strands triage -> specialists -> synthesis
+          -> strict bounded planner -> veto-only critic
+          -> pending human-approved plan
+          -> resolved-incident postmortem
 
 control-host human
   -> recovery-agent approve/reject
       -> owner-only Unix socket (0600)
           -> separate approval token
+          -> dependency re-check
           -> one already-bound typed action
           -> fresh verification
 ```
@@ -47,7 +53,7 @@ npm install
 npm run demo
 ```
 
-The demo starts an ephemeral loopback node server and drives the same HTTP gateway, control runtime, watch path, incident path, and planner boundary used by the product. It is explicitly labeled `SIMULATED DEMONSTRATION` and never pretends fake model/service behavior is production evidence.
+The demo runs the real control/HTTP/recovery/watch/plan path against an explicitly simulated fleet. Output remains labeled `SIMULATED DEMONSTRATION`; fake model or host evidence is never presented as physical production evidence.
 
 ## Node agent
 
@@ -56,25 +62,23 @@ export RECOVERY_NODE_TOKEN_EAST_01='replace-with-a-long-random-secret'
 recovery-agent node ./node.json
 ```
 
-Public service IDs map to configured systemd units. Remote callers cannot supply a unit name, shell command, health URL, or health port.
+Public service IDs map to fixed systemd units. Remote callers cannot provide systemd unit names, shell commands, application-health URLs/ports, certificate targets, or deployment marker paths.
 
-Node configuration may attach fixed HTTP/TCP application probes to a service. Probe targets are local node configuration, not model/MCP arguments. HTTP URLs are restricted to HTTP(S), embedded URL credentials are rejected, timeouts are bounded, and TCP ports are validated. A running systemd unit with a failed configured probe is unhealthy and carries probe evidence.
+A node service can include fixed HTTP/TCP health probes and an optional local deployment marker file. The node can also define fixed TLS certificate targets. Those values are node configuration, not model/MCP operation arguments.
 
-The production Linux node runtime also exposes deterministic resource evidence through `/v1/node`. `LinuxNodeResourceProbe` reads memory/swap from `/proc/meminfo`, load/CPU/uptime from Node OS APIs, root filesystem capacity/inodes from `statfs`, and root mount mode from `/proc/self/mountinfo`; it does not execute a shell command or write a probe file.
+The node runtime exposes:
 
-The current node HTTP transport defaults to loopback. Do not expose it directly to the public Internet. Remote production use still requires a private network/tunnel or trusted TLS termination until outbound enrollment, mTLS, and credential rotation are implemented.
+- fixed systemd lifecycle state;
+- configured HTTP/TCP application health evidence;
+- deployment marker hash/timestamp evidence without marker contents/path;
+- Linux memory, swap, load, uptime, root byte/inode use, and root read-only state;
+- configured TLS certificate expiry/trust evidence.
 
-## Control host
+The current node HTTP transport defaults to loopback. Do not expose it directly to the public Internet. Outbound enrollment, mTLS, and credential rotation remain production gates.
 
-```bash
-export RECOVERY_NODE_TOKEN_EAST_01='replace-with-the-same-secret'
-export RECOVERY_APPROVAL_TOKEN='replace-with-a-separate-long-approval-secret'
-recovery-agent mcp ./control.json
-```
+## Model-facing MCP tools
 
-Recovery Agent uses the official MCP TypeScript server SDK v2.
-
-Current model-facing MCP tools:
+Current tools are intentionally intention-level:
 
 - `fleet_status`
 - `recovery_readiness`
@@ -86,56 +90,43 @@ Current model-facing MCP tools:
 - `watch_run`
 - `incident_list`
 - `incident_inspect`
+- `incident_postmortem`
 - `recovery_plan_list`
 - `recovery_plan_inspect`
 
 Approval and rejection are deliberately **not MCP tools**.
 
+## Deterministic recovery
+
+Recovery Agent applies the same path whether recovery is user-triggered or watch-triggered:
+
+1. coalesce concurrent recovery for the same node/service;
+2. respect pending-approval and human-required suppression;
+3. inspect systemd + configured application probes;
+4. block downstream recovery while declared dependencies are unhealthy/unreachable;
+5. spend from the rolling automatic restart budget;
+6. perform a fixed typed restart;
+7. freshly inspect systemd + application health;
+8. escalate to Strands only after deterministic recovery is exhausted.
+
+`maxRestartAttempts` is a rolling ceiling, not a fresh allowance on every watch cycle. The default window is 600 seconds, and successful restarts still consume budget so a flapping service cannot receive infinite fresh attempts.
+
 ## Recovery Readiness
 
-`recovery_readiness` answers a different question from ordinary health: **can each configured target actually be recovered right now, and what would block it?** The report is read-only and classifies services as:
+`recovery_readiness` asks a different question from workload health: **can this service actually be recovered right now?**
 
-- `ready`: automatic recovery is currently available;
-- `limited`: reachable and not blocked, but automatic restart is unavailable because of policy or rolling budget;
-- `blocked`: dependency health or human-owned incident/approval state currently blocks automatic recovery;
-- `unreachable`: the target cannot currently be inspected.
+Statuses:
 
-Each service includes current target reachability/health, restart policy, the **same live rolling budget** used by recovery execution, dependency reachability/health, pending plan IDs, human-required/dependency-blocked incidents, and explicit reasons.
+- `ready`: automatic recovery is available;
+- `limited`: target is reachable but policy or rolling budget limits automatic recovery;
+- `blocked`: dependencies, pending approval, or human ownership prevent automatic recovery;
+- `unreachable`: target cannot currently be inspected.
 
-A healthy service can therefore be `limited`. Green workload health does not magically replenish an exhausted restart budget. Recovery Readiness does not open incidents, spend budget, or execute a recovery action.
-
-A built-in readiness watch runs every five minutes by default. It records the latest report/error in watch state. The combined watch coordinator runs node watches, then service watches, then readiness so the readiness report observes the latest deterministic state from that cycle.
-
-## Rolling automatic restart budgets
-
-`maxRestartAttempts` is a rolling automatic-recovery ceiling, not a fresh allowance on every watch cycle. `restartBudgetWindowSeconds` defaults to 600 seconds. Every actual automatic restart consumes budget, including successful restarts. When the window is exhausted, Recovery Agent performs no restart and moves directly into investigation/planning.
-
-The automatic budget ledger is process-local today. Durable budget authority across control-host restart remains a production promotion gate.
-
-## Dependency-aware recovery
-
-Services can declare same-node or cross-node dependencies. Configuration rejects unknown targets, duplicates, self-dependencies, and cycles.
-
-For an unhealthy dependent service, Recovery Agent verifies dependencies before mutation. An unhealthy/unreachable dependency blocks target mutation with zero restart attempts. Once dependencies recover, normal bounded target recovery resumes. `health_sweep` orders dependencies before dependents. Human-approved execution also re-checks dependencies.
-
-## Recovery suppression barriers
-
-Recovery Agent deliberately stops retrying once deterministic ownership changes:
-
-- same-target concurrent recovery shares one in-flight operation;
-- `pending_approval` suppresses automatic mutation until decision or verified external recovery;
-- `human_required` suppresses automatic mutation/Strands reinvocation until verified external recovery;
-- `dependency_blocked` suppresses target mutation while dependencies remain unhealthy.
-
-## Partial-fleet operation
-
-`fleet_status` isolates node failures. One unreachable node does not erase reachable nodes or stop bounded work elsewhere. `node_inspect` provides direct read-only inspection for a configured node.
+The report reads the same live restart budget, dependency state, incidents, plans, and target evidence used by execution. It opens no recovery incident, consumes no budget, and performs no mutation. A built-in readiness watch runs every five minutes by default.
 
 ## Built-in Linux Node Watch
 
-Every configured node receives deterministic resource monitoring for memory, swap, root-filesystem byte usage, inode usage when supported, root read-only state when determinable, normalized one-minute load, and uptime.
-
-Default limits:
+Default deterministic limits:
 
 ```text
 memory used                 > 92%
@@ -144,39 +135,86 @@ root filesystem bytes used  > 90%
 root filesystem inodes used > 90%
 1m load average / CPU       > 2.0
 root filesystem read-only   must be false
+node clock drift            > 30 seconds
 ```
 
-Node Watch is read-only. Degraded/unreachable evidence opens or updates process-local node-health incidents; fresh healthy evidence resolves them. It does not automatically reboot, drain, or mutate the node.
+Clock drift is measured against the midpoint of the node-inspection request and records round-trip time separately to reduce latency bias.
 
-`watch_list` returns service watches, node watches, node-health incidents, and Recovery Readiness state. `watch_run` forces node, service, and readiness passes.
+Node Watch opens/updates process-local node-health incidents for degraded or unreachable evidence and resolves them after fresh healthy evidence. It is observation/escalation only. It does not reboot, drain, rewrite time, or mutate the node.
+
+## Application health
+
+A systemd process being `active` is not enough when application probes are configured. Fixed HTTP/TCP probes are evaluated only after systemd is running; all configured probes must pass for the service snapshot to be healthy.
+
+HTTP health config permits only HTTP(S), rejects embedded credentials, validates expected statuses, and bounds timeouts. TCP config fixes host/port and timeout on the node. Caller-supplied probe targets are not supported.
+
+## Certificate Watch
+
+Configured TLS targets are inspected read-only. Evidence includes reachability, authorization/trust, expiry, subject/issuer, fingerprint, and errors.
+
+Defaults:
+
+```text
+warning  <= 30 days remaining
+critical <= 7 days remaining
+critical for TLS authorization failure
+```
+
+Certificate inspection runs every six hours by default. Certificate problems have their own watch/incidents and **do not spend service restart budget**, because restarting a process is not certificate renewal despite what desperate automation might wish.
+
+## Deployment correlation
+
+A service may declare a local `deploymentMarkerFile`. Recovery Agent hashes bounded marker metadata/content into SHA-256 evidence and exposes only the hash and deployment timestamp.
+
+The deployment watch establishes a baseline, detects marker changes, and starts a ten-minute stabilization window. During stabilization it checks every five seconds. A new deployment followed by unhealthy service evidence opens a deployment-regression incident.
+
+Combined automatic watch order is:
+
+```text
+node -> certificate -> deployment -> service recovery -> readiness
+```
+
+Deployment evidence is captured before service recovery can mutate the workload and erase causal clues.
+
+## Strands reasoning boundary
+
+Recovery Agent imports the shared `@tjxjnoobie/custom-strands-bridge`, not `@strands-agents/sdk` directly.
+
+After deterministic recovery exhaustion:
+
+```text
+strict triage
+  -> 1..3 unique specialist domains
+      service | application | dependency | deployment | node | network
+  -> synthesis
+  -> strict planner {action, rationale}
+  -> veto-only critic
+  -> deterministic plan creation
+```
+
+Malformed triage falls back to one service specialist instead of breaking escalation. Specialist fan-out is capped at three.
+
+The planner may propose only `restart_service` or `none`; it cannot choose the target or include commands, credentials, or arbitrary arguments. The critic can only accept/reject the already-bounded proposal. A rejected or malformed critic path creates **no plan** and fails closed to human intervention.
 
 ## Human approval
 
-A valid Strands proposal is target-bound by deterministic incident state and stored as `pending_approval`. The planner may return only strict `{action, rationale}` JSON and cannot supply another target, command, credential, or arbitrary argument.
+A valid elevated proposal is target-bound from deterministic incident state and stored `pending_approval`.
 
 ```bash
-export RECOVERY_APPROVAL_TOKEN='replace-with-a-separate-long-secret'
+export RECOVERY_APPROVAL_TOKEN='replace-with-a-separate-long-approval-secret'
 recovery-agent approve <plan-id>
 recovery-agent reject <plan-id> 'reason'
 ```
 
-The owner-only approval socket is mode `0600`. Wrong-token requests execute no mutation. A valid approval executes exactly one already-bound typed action, re-checks dependencies, and freshly verifies systemd + application health.
+The local Unix approval socket is mode `0600`. Wrong-token requests execute no mutation. A valid approval re-checks dependencies, executes exactly one already-bound typed action, and performs fresh verification.
 
-## Built-in service watches
+## Incident postmortems
 
-Configured services are watched by default every 30 seconds unless disabled. Systemd lifecycle and configured HTTP/TCP probes compose into one service snapshot. Watches reuse the exact `recoverService` path, so budgets, dependencies, suppression, Strands escalation, and verification cannot drift into a second behavior.
+`incident_postmortem` is read-only and only accepts an incident already marked `resolved`. Unresolved incidents are rejected before a Strands runtime is created.
 
-## Strands boundary
+The model returns a strict typed structure containing summary, root cause, contributing factors, recovery, prevention, and confidence. Incident identity is deterministically supplied, and only recovery plans belonging to that incident are included. The prompt requires root cause `unknown` when the evidence does not establish causality and forbids invented people, deployments, actions, or outcomes.
 
-Recovery Agent depends on `@tjxjnoobie/custom-strands-bridge`, not directly on `@strands-agents/sdk`. Strands investigates bounded evidence and may propose one strict bounded action after deterministic recovery exhausts. It cannot retarget, approve, or mutate.
-
-Optional investigation configuration:
-
-- `RECOVERY_AGENT_MODEL_ID`
-- `RECOVERY_AGENT_INVESTIGATION_MCP_URL`
-- `RECOVERY_AGENT_INVESTIGATION_MCP_AUTHORIZATION`
-
-## Development
+## Development / validation status
 
 Node.js 22+ is required.
 
@@ -185,6 +223,23 @@ npm install
 npm run check
 ```
 
-The bridge is temporarily pinned to exact Git commit `677f141a73fcc1bed23edf02c8fdfbd116fd034d` while its own promotion gates remain open.
+The bridge remains pinned to reviewed commit `677f141a73fcc1bed23edf02c8fdfbd116fd034d` while its own promotion gates remain open.
 
-See `docs/recovery-agent/RECOVERY_AGENT_FINAL_DRAFT.md` for the owning design and validation contract.
+Earlier foundation validation passed 30/30 delegate/E2E tests, strict TypeScript, production build, and package dry-run. Newer slices have focused strict/dependency-free delegate validation plus live Linux, HTTP/TCP, and TLS harnesses.
+
+This execution environment cannot currently resolve external npm/package/model endpoints, so the branch intentionally does **not** claim a fresh full dependency installation, physical MCP Inspector run, physical Strands SDK/model invocation, or clean-directory `npx` smoke test for the newest slices.
+
+## Remaining promotion gates
+
+- networked dependency install + lockfile and clean package smoke;
+- physical MCP Inspector/current-host validation;
+- physical Strands/provider/model validation through the bridge;
+- durable incidents/plans/audit/restart-budget/node/certificate/deployment state;
+- production identity-aware approval attribution/expiry/revocation/audit;
+- outbound node enrollment, mTLS, and credential rotation;
+- Docker/Kubernetes/network/database/Minecraft adapters;
+- typed actions beyond systemd restart such as rollback/failover/drain/quarantine/reboot;
+- semantic user-created watch compilation;
+- physical action -> execution -> resulting state evidence on an authorized disposable service.
+
+See `docs/recovery-agent/RECOVERY_AGENT_FINAL_DRAFT.md` for the owning design and promotion contract.
