@@ -1,7 +1,15 @@
+import { ApprovedRecoveryExecutor } from '../control/approval/ApprovedRecoveryExecutor.js'
+import { RecoveryApprovalVerifier } from '../control/approval/RecoveryApprovalVerifier.js'
+import { RecoveryPlanApprovalHandler } from '../control/approval/RecoveryPlanApprovalHandler.js'
 import { InMemoryIncidentRepository } from '../control/incident/repository/InMemoryIncidentRepository.js'
 import type { IRecoveryInvestigator, RecoveryInvestigationRequest, RecoveryInvestigationResult } from '../control/investigation/IRecoveryInvestigator.js'
 import { RecoveryPolicyResolver } from '../control/policy/RecoveryPolicyResolver.js'
 import type { ServiceRecoveryPolicy } from '../control/policy/ServiceRecoveryPolicy.js'
+import type { IRecoveryPlanner, RecoveryPlanningRequest } from '../control/plan/IRecoveryPlanner.js'
+import { InMemoryRecoveryPlanRepository } from '../control/plan/InMemoryRecoveryPlanRepository.js'
+import { RecoveryEscalationHandler } from '../control/plan/RecoveryEscalationHandler.js'
+import { RecoveryPlanControl } from '../control/plan/RecoveryPlanControl.js'
+import type { RecoveryPlanProposal } from '../control/plan/RecoveryPlan.js'
 import { RecoveryOrchestrator } from '../control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
 import type { RecoveryWatchDefinition } from '../control/watch/RecoveryWatchDefinition.js'
@@ -20,6 +28,15 @@ class DemoRecoveryInvestigator implements IRecoveryInvestigator {
   }
 }
 
+class DemoRecoveryPlanner implements IRecoveryPlanner {
+  public async plan(_request: RecoveryPlanningRequest): Promise<RecoveryPlanProposal> {
+    return {
+      action: 'restart_service',
+      rationale: 'Simulated proposal: one additional operator-approved restart could test whether the failure is transient.',
+    }
+  }
+}
+
 export interface RecoveryDemoResult {
   readonly label: 'SIMULATED DEMONSTRATION'
   readonly before: unknown
@@ -27,6 +44,7 @@ export interface RecoveryDemoResult {
   readonly after: unknown
   readonly watches: unknown
   readonly incidents: unknown
+  readonly plans: unknown
 }
 
 export class RecoveryDemoHandler {
@@ -40,15 +58,32 @@ export class RecoveryDemoHandler {
     const address = await nodeServer.listen()
     const gateway = new HttpNodeAgentGateway('demo-east', address.baseUrl, token)
     const incidents = new InMemoryIncidentRepository()
+    const plans = new InMemoryRecoveryPlanRepository()
     const policies: readonly ServiceRecoveryPolicy[] = [
       { nodeId: 'demo-east', serviceId: 'worker', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 2 },
       { nodeId: 'demo-east', serviceId: 'payments', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 1 },
     ]
+    const escalationHandler = new RecoveryEscalationHandler(
+      incidents,
+      new DemoRecoveryInvestigator(),
+      new DemoRecoveryPlanner(),
+      plans,
+    )
+    const planControl = new RecoveryPlanControl(
+      plans,
+      new RecoveryPlanApprovalHandler(
+        plans,
+        incidents,
+        new RecoveryApprovalVerifier('demo-approval-token-0001'),
+        new ApprovedRecoveryExecutor([gateway], policies),
+      ),
+    )
     const control = new RecoveryControlRuntime(
       [gateway],
       policies,
-      new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, new DemoRecoveryInvestigator()),
+      new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, escalationHandler),
       incidents,
+      planControl,
     )
     const watchDefinitions: readonly RecoveryWatchDefinition[] = policies.map((policy) => ({
       nodeId: policy.nodeId,
@@ -64,7 +99,16 @@ export class RecoveryDemoHandler {
       const after = await tools.callTool('fleet_status')
       const watchStates = await tools.callTool('watch_list')
       const incidentList = await tools.callTool('incident_list')
-      return { label: 'SIMULATED DEMONSTRATION', before, sweep, after, watches: watchStates, incidents: incidentList }
+      const planList = await tools.callTool('recovery_plan_list')
+      return {
+        label: 'SIMULATED DEMONSTRATION',
+        before,
+        sweep,
+        after,
+        watches: watchStates,
+        incidents: incidentList,
+        plans: planList,
+      }
     } finally {
       await watchService.close()
       await control.close()

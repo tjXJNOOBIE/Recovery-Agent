@@ -16,3 +16,8 @@ export { SystemdNodeServiceRuntime } from './node/systemd/SystemdNodeServiceRunt
 export { RecoveryWatchDefinitionBuilder } from './control/watch/RecoveryWatchDefinitionBuilder.js'
 export type { RecoveryWatchDefinition, RecoveryWatchRunStatus, RecoveryWatchState } from './control/watch/RecoveryWatchDefinition.js'
 export { RecoveryWatchService } from './control/watch/RecoveryWatchService.js'
+
+export { RecoveryPlanProposalParser } from './control/plan/RecoveryPlanProposalParser.js'
+export { StrandsRecoveryPlanner } from './control/plan/StrandsRecoveryPlanner.js'
+export type { RecoveryPlan, RecoveryPlanAction, RecoveryPlanActionType, RecoveryPlanProposal, RecoveryPlanRisk, RecoveryPlanStatus } from './control/plan/RecoveryPlan.js'
+export { RecoveryApprovalVerifier } from './control/approval/RecoveryApprovalVerifier.js'

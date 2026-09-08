@@ -1,15 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { InMemoryIncidentRepository } from '../../../src/control/incident/repository/InMemoryIncidentRepository.js'
-import { RecoveryPolicyResolver } from '../../../src/control/policy/RecoveryPolicyResolver.js'
-import { RecoveryOrchestrator } from '../../../src/control/recovery/RecoveryOrchestrator.js'
-import { RecoveryControlRuntime } from '../../../src/control/runtime/RecoveryControlRuntime.js'
 import { RecoveryWatchService } from '../../../src/control/watch/RecoveryWatchService.js'
 import { DemoNodeServiceRuntime } from '../../../src/demo/runtime/DemoNodeServiceRuntime.js'
 import { HttpNodeAgentGateway } from '../../../src/node/http/HttpNodeAgentGateway.js'
 import { NodeAgentHttpServer } from '../../../src/node/http/NodeAgentHttpServer.js'
 import { FakeRecoveryInvestigator } from '../../fake/FakeRecoveryInvestigator.js'
+import { buildRecoveryTestGraph } from '../../fake/RecoveryTestGraph.js'
 
 test('runsDueWatchesThroughBoundedRecoveryAndSkipsUntilIntervalElapses', async () => {
   const token = 'test-token-1234567890'
@@ -17,14 +14,10 @@ test('runsDueWatchesThroughBoundedRecoveryAndSkipsUntilIntervalElapses', async (
     { id: 'worker', lifecycleState: 'stopped', healthy: false, restartRestoresHealth: true },
   ]), token)
   const address = await server.listen()
-  const incidents = new InMemoryIncidentRepository()
-  const control = new RecoveryControlRuntime(
-    [new HttpNodeAgentGateway('node-a', address.baseUrl, token)],
-    [{ nodeId: 'node-a', serviceId: 'worker', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 1 }],
-    new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, new FakeRecoveryInvestigator()),
-    incidents,
-  )
-  const watches = new RecoveryWatchService(control, [
+  const gateway = new HttpNodeAgentGateway('node-a', address.baseUrl, token)
+  const policy = { nodeId: 'node-a', serviceId: 'worker', expectedState: 'running' as const, restartAllowed: true, maxRestartAttempts: 1 }
+  const graph = buildRecoveryTestGraph([gateway], [policy], new FakeRecoveryInvestigator())
+  const watches = new RecoveryWatchService(graph.control, [
     { nodeId: 'node-a', serviceId: 'worker', intervalMs: 1_000 },
   ])
 
@@ -45,7 +38,7 @@ test('runsDueWatchesThroughBoundedRecoveryAndSkipsUntilIntervalElapses', async (
     assert.equal(state?.lastStartedAt, new Date(11_000).toISOString())
   } finally {
     await watches.close()
-    await control.close()
+    await graph.control.close()
     await server.close()
   }
 })
@@ -56,14 +49,9 @@ test('capturesWatchFailureAsRuntimeStateInsteadOfCrashingTheWatchLoop', async ()
     { id: 'worker', lifecycleState: 'running', healthy: true, restartRestoresHealth: true },
   ]), token)
   const address = await server.listen()
-  const incidents = new InMemoryIncidentRepository()
-  const control = new RecoveryControlRuntime(
-    [new HttpNodeAgentGateway('node-a', address.baseUrl, token)],
-    [],
-    new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, new FakeRecoveryInvestigator()),
-    incidents,
-  )
-  const watches = new RecoveryWatchService(control, [
+  const gateway = new HttpNodeAgentGateway('node-a', address.baseUrl, token)
+  const graph = buildRecoveryTestGraph([gateway], [], new FakeRecoveryInvestigator())
+  const watches = new RecoveryWatchService(graph.control, [
     { nodeId: 'node-a', serviceId: 'worker', intervalMs: 1_000 },
   ])
 
@@ -76,7 +64,7 @@ test('capturesWatchFailureAsRuntimeStateInsteadOfCrashingTheWatchLoop', async ()
     assert.match(state?.lastError ?? '', /No recovery policy configured/)
   } finally {
     await watches.close()
-    await control.close()
+    await graph.control.close()
     await server.close()
   }
 })

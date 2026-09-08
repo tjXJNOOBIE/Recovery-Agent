@@ -1,23 +1,23 @@
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
-import type { IRecoveryInvestigator } from '../investigation/IRecoveryInvestigator.js'
 import type { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
 import type { RecoveryPolicyResolver } from '../policy/RecoveryPolicyResolver.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
+import type { RecoveryEscalationHandler } from '../plan/RecoveryEscalationHandler.js'
 import type { RecoveryRunResult } from './RecoveryRunResult.js'
 
 export class RecoveryOrchestrator {
   private readonly policyResolver: RecoveryPolicyResolver
   private readonly incidentRepository: InMemoryIncidentRepository
-  private readonly investigator: IRecoveryInvestigator
+  private readonly escalationHandler: RecoveryEscalationHandler
 
   public constructor(
     policyResolver: RecoveryPolicyResolver,
     incidentRepository: InMemoryIncidentRepository,
-    investigator: IRecoveryInvestigator,
+    escalationHandler: RecoveryEscalationHandler,
   ) {
     this.policyResolver = policyResolver
     this.incidentRepository = incidentRepository
-    this.investigator = investigator
+    this.escalationHandler = escalationHandler
   }
 
   public async recover(gateway: INodeAgentGateway, policy: ServiceRecoveryPolicy): Promise<RecoveryRunResult> {
@@ -60,24 +60,18 @@ export class RecoveryOrchestrator {
       }
     }
 
-    const investigation = await this.investigator.investigate({
+    const escalation = await this.escalationHandler.investigateAndPlan({
       incident,
       before: initialSnapshot,
       afterAttempts: currentSnapshot,
       attempts: restartAttempts,
     })
-    incident = this.incidentRepository.append(incident.id, 'investigation', investigation.summary, 'recovering')
-    incident = this.incidentRepository.append(
-      incident.id,
-      'escalated',
-      investigation.requiresHuman ? 'Human intervention required after bounded recovery' : 'Investigation completed without an authorized automatic action',
-      'human_required',
-    )
     return {
-      status: 'escalated',
+      status: escalation.plan === undefined ? 'escalated' : 'approval_required',
       snapshot: currentSnapshot,
-      incident,
-      investigationSummary: investigation.summary,
+      incident: escalation.incident,
+      investigationSummary: escalation.investigationSummary,
+      ...(escalation.plan === undefined ? {} : { recoveryPlan: escalation.plan }),
       restartAttempts,
     }
   }

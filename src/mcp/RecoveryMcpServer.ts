@@ -12,6 +12,18 @@ const nodeServiceInputSchema = z.object({
 const incidentInputSchema = z.object({
   incidentId: z.string().trim().min(1),
 }).strict()
+const planInputSchema = z.object({
+  planId: z.string().trim().min(1),
+}).strict()
+const planApprovalInputSchema = z.object({
+  planId: z.string().trim().min(1),
+  approvalToken: z.string().trim().min(1),
+}).strict()
+const planRejectionInputSchema = z.object({
+  planId: z.string().trim().min(1),
+  approvalToken: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+}).strict()
 
 export class RecoveryMcpServer {
   private readonly toolRouter: RecoveryMcpToolRouter
@@ -105,6 +117,52 @@ export class RecoveryMcpServer {
         annotations: { readOnlyHint: false, destructiveHint: false },
       },
       async () => this.toolResult(await this.toolRouter.callTool('watch_run')),
+    )
+
+    server.registerTool(
+      'recovery_plan_list',
+      {
+        description: 'List typed recovery plans proposed after automatic recovery is exhausted.',
+        inputSchema: emptyInputSchema,
+        annotations: { readOnlyHint: true },
+      },
+      async () => this.toolResult(await this.toolRouter.callTool('recovery_plan_list')),
+    )
+
+    server.registerTool(
+      'recovery_plan_inspect',
+      {
+        description: 'Inspect one typed recovery plan and its approval status.',
+        inputSchema: planInputSchema,
+        annotations: { readOnlyHint: true },
+      },
+      async ({ planId }) => this.toolResult(
+        await this.toolRouter.callTool('recovery_plan_inspect', { planId }),
+      ),
+    )
+
+    server.registerTool(
+      'recovery_plan_approve',
+      {
+        description: 'Approve and execute one pending elevated recovery plan using an out-of-band approval token.',
+        inputSchema: planApprovalInputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: true },
+      },
+      async ({ planId, approvalToken }) => this.toolResult(
+        await this.toolRouter.callTool('recovery_plan_approve', { planId, approvalToken }),
+      ),
+    )
+
+    server.registerTool(
+      'recovery_plan_reject',
+      {
+        description: 'Reject one pending recovery plan using an out-of-band approval token.',
+        inputSchema: planRejectionInputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      async ({ planId, approvalToken, reason }) => this.toolResult(
+        await this.toolRouter.callTool('recovery_plan_reject', { planId, approvalToken, reason }),
+      ),
     )
 
     server.registerTool(

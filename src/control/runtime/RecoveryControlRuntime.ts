@@ -3,6 +3,9 @@ import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
 import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
 import type { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
+import type { RecoveryPlanApprovalResult } from '../approval/RecoveryPlanApprovalHandler.js'
+import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
+import type { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
 import type { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
 import type { RecoveryRunResult } from '../recovery/RecoveryRunResult.js'
 
@@ -17,17 +20,20 @@ export class RecoveryControlRuntime {
   private readonly policies: readonly ServiceRecoveryPolicy[]
   private readonly recoveryOrchestrator: RecoveryOrchestrator
   private readonly incidentRepository: InMemoryIncidentRepository
+  private readonly planControl: RecoveryPlanControl
 
   public constructor(
     gateways: readonly INodeAgentGateway[],
     policies: readonly ServiceRecoveryPolicy[],
     recoveryOrchestrator: RecoveryOrchestrator,
     incidentRepository: InMemoryIncidentRepository,
+    planControl: RecoveryPlanControl,
   ) {
     this.gateways = [...gateways]
     this.policies = [...policies]
     this.recoveryOrchestrator = recoveryOrchestrator
     this.incidentRepository = incidentRepository
+    this.planControl = planControl
   }
 
   public async fleetStatus(): Promise<FleetStatusResult> {
@@ -65,6 +71,22 @@ export class RecoveryControlRuntime {
 
   public inspectIncident(incidentId: string): IncidentRecord {
     return this.incidentRepository.require(incidentId)
+  }
+
+  public listRecoveryPlans(): readonly RecoveryPlan[] {
+    return this.planControl.list()
+  }
+
+  public inspectRecoveryPlan(planId: string): RecoveryPlan {
+    return this.planControl.inspect(planId)
+  }
+
+  public approveRecoveryPlan(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
+    return this.planControl.approve(planId, approvalToken)
+  }
+
+  public rejectRecoveryPlan(planId: string, approvalToken: string, reason: string): RecoveryPlan {
+    return this.planControl.reject(planId, approvalToken, reason)
   }
 
   public async close(): Promise<void> {

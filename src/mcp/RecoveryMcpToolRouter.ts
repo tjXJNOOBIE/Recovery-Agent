@@ -25,7 +25,29 @@ export class RecoveryMcpToolRouter {
       { name: 'watch_list', description: 'List configured built-in recovery watches and their latest runtime state.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'watch_run', description: 'Run every configured recovery watch immediately through the same bounded recovery path.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'incident_list', description: 'List recovery incidents from this control runtime.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-      { name: 'incident_inspect', description: 'Inspect one recovery incident and its timeline.', inputSchema: { type: 'object', properties: { incidentId: { type: 'string' } }, required: ['incidentId'], additionalProperties: false } },
+      { name: 'incident_inspect', description: 'Inspect one recovery incident and its timeline.', inputSchema: this.idSchema('incidentId') },
+      { name: 'recovery_plan_list', description: 'List typed recovery plans proposed after bounded automatic recovery is exhausted.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'recovery_plan_inspect', description: 'Inspect one typed recovery plan and its approval status.', inputSchema: this.idSchema('planId') },
+      {
+        name: 'recovery_plan_approve',
+        description: 'Explicitly approve and execute one pending elevated recovery plan using the out-of-band approval token.',
+        inputSchema: {
+          type: 'object',
+          properties: { planId: { type: 'string' }, approvalToken: { type: 'string' } },
+          required: ['planId', 'approvalToken'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'recovery_plan_reject',
+        description: 'Explicitly reject one pending recovery plan using the out-of-band approval token.',
+        inputSchema: {
+          type: 'object',
+          properties: { planId: { type: 'string' }, approvalToken: { type: 'string' }, reason: { type: 'string' } },
+          required: ['planId', 'approvalToken', 'reason'],
+          additionalProperties: false,
+        },
+      },
     ]
   }
 
@@ -39,6 +61,17 @@ export class RecoveryMcpToolRouter {
       case 'watch_run': return this.watchService.runAllNow()
       case 'incident_list': return this.controlRuntime.listIncidents()
       case 'incident_inspect': return this.controlRuntime.inspectIncident(this.requireString(args, 'incidentId'))
+      case 'recovery_plan_list': return this.controlRuntime.listRecoveryPlans()
+      case 'recovery_plan_inspect': return this.controlRuntime.inspectRecoveryPlan(this.requireString(args, 'planId'))
+      case 'recovery_plan_approve': return this.controlRuntime.approveRecoveryPlan(
+        this.requireString(args, 'planId'),
+        this.requireString(args, 'approvalToken'),
+      )
+      case 'recovery_plan_reject': return this.controlRuntime.rejectRecoveryPlan(
+        this.requireString(args, 'planId'),
+        this.requireString(args, 'approvalToken'),
+        this.requireString(args, 'reason'),
+      )
       default: throw new Error(`Unknown Recovery Agent MCP tool: ${name}`)
     }
   }
@@ -48,6 +81,15 @@ export class RecoveryMcpToolRouter {
       type: 'object',
       properties: { nodeId: { type: 'string' }, serviceId: { type: 'string' } },
       required: ['nodeId', 'serviceId'],
+      additionalProperties: false,
+    }
+  }
+
+  private idSchema(key: string): Readonly<Record<string, unknown>> {
+    return {
+      type: 'object',
+      properties: { [key]: { type: 'string' } },
+      required: [key],
       additionalProperties: false,
     }
   }

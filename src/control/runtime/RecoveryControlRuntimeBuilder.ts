@@ -3,10 +3,18 @@ import type { IStrandsAgentRuntimeBootstrap } from '@tjxjnoobie/custom-strands-b
 import { RecoveryAgentRuntimeConfigBuilder, type RecoveryAgentEnvironment } from '../../agent/config/RecoveryAgentRuntimeConfigBuilder.js'
 import type { RecoveryControlConfig } from '../../config/RecoveryControlConfig.js'
 import { HttpNodeAgentGateway } from '../../node/http/HttpNodeAgentGateway.js'
+import { ApprovedRecoveryExecutor } from '../approval/ApprovedRecoveryExecutor.js'
+import { RecoveryApprovalVerifier } from '../approval/RecoveryApprovalVerifier.js'
+import { RecoveryPlanApprovalHandler } from '../approval/RecoveryPlanApprovalHandler.js'
 import { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
 import { StrandsRecoveryInvestigator } from '../investigation/StrandsRecoveryInvestigator.js'
 import { RecoveryPolicyResolver } from '../policy/RecoveryPolicyResolver.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
+import { InMemoryRecoveryPlanRepository } from '../plan/InMemoryRecoveryPlanRepository.js'
+import { RecoveryEscalationHandler } from '../plan/RecoveryEscalationHandler.js'
+import { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
+import { RecoveryPlanProposalParser } from '../plan/RecoveryPlanProposalParser.js'
+import { StrandsRecoveryPlanner } from '../plan/StrandsRecoveryPlanner.js'
 import { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from './RecoveryControlRuntime.js'
 
@@ -29,12 +37,24 @@ export class RecoveryControlRuntimeBuilder {
       maxRestartAttempts: service.maxRestartAttempts,
     })))
     const incidentRepository = new InMemoryIncidentRepository()
-    const investigator = new StrandsRecoveryInvestigator(this.bootstrap, new RecoveryAgentRuntimeConfigBuilder(this.environment))
+    const planRepository = new InMemoryRecoveryPlanRepository()
+    const agentConfigBuilder = new RecoveryAgentRuntimeConfigBuilder(this.environment)
+    const investigator = new StrandsRecoveryInvestigator(this.bootstrap, agentConfigBuilder)
+    const planner = new StrandsRecoveryPlanner(this.bootstrap, agentConfigBuilder, new RecoveryPlanProposalParser())
+    const escalationHandler = new RecoveryEscalationHandler(incidentRepository, investigator, planner, planRepository)
+    const orchestrator = new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidentRepository, escalationHandler)
+    const approvalHandler = new RecoveryPlanApprovalHandler(
+      planRepository,
+      incidentRepository,
+      new RecoveryApprovalVerifier(this.environment['RECOVERY_APPROVAL_TOKEN']),
+      new ApprovedRecoveryExecutor(gateways, policies),
+    )
     return new RecoveryControlRuntime(
       gateways,
       policies,
-      new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidentRepository, investigator),
+      orchestrator,
       incidentRepository,
+      new RecoveryPlanControl(planRepository, approvalHandler),
     )
   }
 
