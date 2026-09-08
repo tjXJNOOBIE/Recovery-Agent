@@ -35,138 +35,63 @@ import { NodeAgentHttpServer } from '../node/http/NodeAgentHttpServer.js'
 import { SystemdNodeServiceRuntime } from '../node/systemd/SystemdNodeServiceRuntime.js'
 import { RecoveryAgentCliHandler } from './RecoveryAgentCliHandler.js'
 
-function resolveRequest(arguments_: string[]): string {
-  const argumentRequest = arguments_.join(' ').trim()
-  if (argumentRequest.length > 0) return argumentRequest
-  if (process.stdin.isTTY === true) return ''
-  return readFileSync(0, 'utf8').trim()
-}
-
-function requireArgument(args: readonly string[], index: number, label: string): string {
-  const value = args[index]?.trim()
-  if (value === undefined || value.length === 0) throw new Error(`${label} is required`)
-  return value
-}
-
-function requireApprovalToken(): string {
-  const token = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
-  if (token === undefined || token.length < 16) throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters')
-  return token
-}
-
-function optionalEnvironment(name: string): string | undefined {
-  const value = process.env[name]?.trim()
-  return value === undefined || value.length === 0 ? undefined : value
-}
+function resolveRequest(arguments_: string[]): string { const argumentRequest = arguments_.join(' ').trim(); if (argumentRequest.length > 0) return argumentRequest; if (process.stdin.isTTY === true) return ''; return readFileSync(0, 'utf8').trim() }
+function requireArgument(args: readonly string[], index: number, label: string): string { const value = args[index]?.trim(); if (value === undefined || value.length === 0) throw new Error(`${label} is required`); return value }
+function requireApprovalToken(): string { const token = process.env['RECOVERY_APPROVAL_TOKEN']?.trim(); if (token === undefined || token.length < 16) throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters'); return token }
+function optionalEnvironment(name: string): string | undefined { const value = process.env[name]?.trim(); return value === undefined || value.length === 0 ? undefined : value }
 
 function resolveStateAuthorityCommand(): string | undefined {
-  const explicit = optionalEnvironment('RECOVERY_STATE_AUTHORITY_COMMAND')
-  if (explicit !== undefined) return explicit
+  const explicit = optionalEnvironment('RECOVERY_STATE_AUTHORITY_COMMAND'); if (explicit !== undefined) return explicit
   if (optionalEnvironment('RECOVERY_STATE_JDBC_URL') === undefined) return undefined
-  if (process.platform === 'win32') {
-    throw new Error('Bundled Recovery state authority launch is currently supported on Linux/macOS control hosts; configure RECOVERY_STATE_AUTHORITY_COMMAND explicitly for another platform')
-  }
-
-  const moduleDirectory = dirname(fileURLToPath(import.meta.url))
-  const bundled = resolve(moduleDirectory, '../../state-authority-runtime/bin/recovery-state-authority')
-  if (!existsSync(bundled)) {
-    throw new Error('Durable Recovery state was requested through RECOVERY_STATE_JDBC_URL, but the bundled state authority launcher is missing; install a packaged Recovery Agent build or set RECOVERY_STATE_AUTHORITY_COMMAND explicitly')
-  }
+  if (process.platform === 'win32') throw new Error('Bundled Recovery state authority launch is currently supported on Linux/macOS control hosts; configure RECOVERY_STATE_AUTHORITY_COMMAND explicitly for another platform')
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url)); const bundled = resolve(moduleDirectory, '../../state-authority-runtime/bin/recovery-state-authority')
+  if (!existsSync(bundled)) throw new Error('Durable Recovery state was requested through RECOVERY_STATE_JDBC_URL, but the bundled state authority launcher is missing; install a packaged Recovery Agent build or set RECOVERY_STATE_AUTHORITY_COMMAND explicitly')
   return bundled
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2)
-  const command = args[0]
-
-  if (command === 'demo') {
-    process.stdout.write(`${JSON.stringify(await new RecoveryDemoHandler().run(), null, 2)}\n`)
-    return
-  }
+  const args = process.argv.slice(2); const command = args[0]
+  if (command === 'demo') { process.stdout.write(`${JSON.stringify(await new RecoveryDemoHandler().run(), null, 2)}\n`); return }
 
   if (command === 'approve' || command === 'reject') {
     const planId = requireArgument(args, 1, 'recovery plan ID')
-    const client = new RecoveryApprovalSocketClient(
-      new RecoveryApprovalSocketPathResolver().resolve(process.env),
-      requireApprovalToken(),
-    )
-    const result = command === 'approve'
-      ? await client.approve(planId)
-      : await client.reject(planId, args.slice(2).join(' '))
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-    return
+    const client = new RecoveryApprovalSocketClient(new RecoveryApprovalSocketPathResolver().resolve(process.env), requireApprovalToken())
+    const result = command === 'approve' ? await client.approve(planId) : await client.reject(planId, args.slice(2).join(' '))
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`); return
   }
 
   if (command === 'node') {
-    const config = new RecoveryNodeConfigReader().read(requireArgument(args, 1, 'node config path'))
-    const token = process.env[config.tokenEnvironmentVariable]?.trim()
-    if (token === undefined || token.length < 16) {
-      throw new Error(`Environment variable ${config.tokenEnvironmentVariable} must contain a node token of at least 16 characters`)
-    }
-    const server = new NodeAgentHttpServer(
-      new SystemdNodeServiceRuntime(config.nodeId, config.services),
-      token,
-      new LinuxNodeResourceProbe(),
-      new NodeCertificateProbe(config.nodeId, config.certificates),
-    )
-    const address = await server.listen(config.listenPort, config.listenHost)
-    process.stderr.write(`Recovery node ${config.nodeId} listening on ${address.baseUrl}\n`)
-    await new Promise<void>((resolvePromise) => {
-      const stop = (): void => { void server.close().finally(resolvePromise) }
-      process.once('SIGINT', stop)
-      process.once('SIGTERM', stop)
-    })
-    return
+    const config = new RecoveryNodeConfigReader().read(requireArgument(args, 1, 'node config path')); const token = process.env[config.tokenEnvironmentVariable]?.trim()
+    if (token === undefined || token.length < 16) throw new Error(`Environment variable ${config.tokenEnvironmentVariable} must contain a node token of at least 16 characters`)
+    const server = new NodeAgentHttpServer(new SystemdNodeServiceRuntime(config.nodeId, config.services), token, new LinuxNodeResourceProbe(), new NodeCertificateProbe(config.nodeId, config.certificates))
+    const address = await server.listen(config.listenPort, config.listenHost); process.stderr.write(`Recovery node ${config.nodeId} listening on ${address.baseUrl}\n`)
+    await new Promise<void>((resolvePromise) => { const stop = (): void => { void server.close().finally(resolvePromise) }; process.once('SIGINT', stop); process.once('SIGTERM', stop) }); return
   }
 
   if (command === 'mcp') {
     const config = new RecoveryControlConfigReader().read(requireArgument(args, 1, 'control config path'))
-    const bootstrap = new StrandsAgentRuntimeBootstrap()
-    const durabilityBarrier = new RecoveryDurabilityCheckpointBarrier()
+    const bootstrap = new StrandsAgentRuntimeBootstrap(); const durabilityBarrier = new RecoveryDurabilityCheckpointBarrier()
     const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env, durabilityBarrier).build(config)
+    const semanticTargets = config.nodes.flatMap((node) => node.services.map((service) => ({ nodeId: node.id, serviceId: service.id })))
     const serviceWatches = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
     const nodeWatches = new RecoveryNodeWatchService(control, new RecoveryNodeWatchDefinitionBuilder().build(config))
     const readinessWatch = new RecoveryReadinessWatchService(control)
     const certificateWatch = new RecoveryCertificateWatchService(control, config.nodes.map((node) => node.id))
-    const deploymentWatch = new RecoveryDeploymentWatchService(control)
-    const watches = new RecoveryWatchCoordinator(
-      serviceWatches,
-      nodeWatches,
-      1_000,
-      readinessWatch,
-      certificateWatch,
-      deploymentWatch,
-    )
+    const deploymentWatch = new RecoveryDeploymentWatchService(control, undefined, undefined, undefined, semanticTargets)
+    const watches = new RecoveryWatchCoordinator(serviceWatches, nodeWatches, 1_000, readinessWatch, certificateWatch, deploymentWatch, durabilityBarrier)
 
-    const semanticTargets = config.nodes.flatMap((node) =>
-      node.services.map((service) => ({ nodeId: node.id, serviceId: service.id })),
-    )
     const semanticParser = new RecoverySemanticWatchParser(semanticTargets)
-    const semanticCompiler = new StrandsRecoverySemanticWatchCompiler(
-      bootstrap,
-      new RecoveryAgentRuntimeConfigBuilder(process.env),
-      semanticTargets,
-      semanticParser,
-    )
-    const semanticWatches = new RecoverySemanticWatchService(
-      semanticCompiler,
-      serviceWatches,
-      semanticTargets,
-    )
+    const semanticCompiler = new StrandsRecoverySemanticWatchCompiler(bootstrap, new RecoveryAgentRuntimeConfigBuilder(process.env), semanticTargets, semanticParser)
+    const semanticWatches = new RecoverySemanticWatchService(semanticCompiler, serviceWatches, semanticTargets)
 
     let durability: RecoveryDurableStateCoordinator | undefined
     const authorityCommand = resolveStateAuthorityCommand()
     if (authorityCommand !== undefined) {
       const authority = await RecoveryStateAuthorityProcessClient.start({ command: authorityCommand })
-      durability = new RecoveryDurableStateCoordinator(authority, control, semanticWatches)
+      durability = new RecoveryDurableStateCoordinator(authority, control, semanticWatches, Date.now, watches)
       try {
-        const loaded = await durability.hydrate()
-        durabilityBarrier.bind(durability)
-        await durabilityBarrier.checkpoint({
-          actor: 'recovery-agent',
-          action: 'control_start',
-          summary: `Hydrated durable recovery state at revision ${loaded.revision} before exposing MCP, watches, or approval`,
-        })
+        const loaded = await durability.hydrate(); durabilityBarrier.bind(durability)
+        await durabilityBarrier.checkpoint({ actor: 'recovery-agent', action: 'control_start', summary: `Hydrated durable recovery state at revision ${loaded.revision} before exposing MCP, watches, or approval` })
         process.stderr.write(`Recovery durable state authority hydrated revision ${loaded.revision}\n`)
       } catch (error: unknown) {
         const failures: unknown[] = [error]
@@ -177,51 +102,26 @@ async function main(): Promise<void> {
       }
     }
 
-    const mcpServer = new RecoveryMcpServer(
-      new RecoveryMcpToolRouter(control, watches, semanticWatches, durabilityBarrier),
-    )
-
+    const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watches, semanticWatches, durabilityBarrier))
     const approvalToken = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
-    const approvalServer = approvalToken === undefined || approvalToken.length === 0
-      ? undefined
-      : new RecoveryApprovalSocketServer(control, new RecoveryApprovalSocketPathResolver().resolve(process.env))
+    const approvalServer = approvalToken === undefined || approvalToken.length === 0 ? undefined : new RecoveryApprovalSocketServer(control, new RecoveryApprovalSocketPathResolver().resolve(process.env))
+    if (approvalServer !== undefined) { await approvalServer.listen(); process.stderr.write(`Recovery approval socket listening at ${new RecoveryApprovalSocketPathResolver().resolve(process.env)}\n`) }
 
-    if (approvalServer !== undefined) {
-      await approvalServer.listen()
-      process.stderr.write(`Recovery approval socket listening at ${new RecoveryApprovalSocketPathResolver().resolve(process.env)}\n`)
-    }
-
-    watches.start()
-    mcpServer.serve()
+    watches.start(); mcpServer.serve()
     await new Promise<void>((resolvePromise, reject) => {
       let closing = false
       const stop = (): void => {
-        if (closing) return
-        closing = true
-        void mcpServer.close()
-          .then(() => watches.close())
-          .then(() => approvalServer?.close())
-          .then(() => durability?.close())
-          .then(() => control.close())
-          .then(resolvePromise, reject)
+        if (closing) return; closing = true
+        void mcpServer.close().then(() => watches.close()).then(() => approvalServer?.close()).then(() => durability?.close()).then(() => control.close()).then(resolvePromise, reject)
       }
-      process.once('SIGINT', stop)
-      process.once('SIGTERM', stop)
-      process.stdin.once('end', stop)
+      process.once('SIGINT', stop); process.once('SIGTERM', stop); process.stdin.once('end', stop)
     })
     return
   }
 
   const bootstrap = new StrandsAgentRuntimeBootstrap()
-  const result = await new RecoveryAgentCliHandler(
-    bootstrap,
-    new RecoveryAgentRuntimeConfigBuilder(process.env),
-  ).handle(resolveRequest(args))
+  const result = await new RecoveryAgentCliHandler(bootstrap, new RecoveryAgentRuntimeConfigBuilder(process.env)).handle(resolveRequest(args))
   process.stdout.write(`${result}\n`)
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error)
-  process.stderr.write(`${message}\n`)
-  process.exitCode = 1
-})
+main().catch((error: unknown) => { const message = error instanceof Error ? error.message : String(error); process.stderr.write(`${message}\n`); process.exitCode = 1 })

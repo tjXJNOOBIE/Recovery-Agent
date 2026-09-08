@@ -9,7 +9,11 @@ export interface IRecoveryDurabilityCheckpoint {
   checkpoint(request: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<void>
 }
 
-export class RecoveryDurabilityCheckpointBarrier implements IRecoveryDurabilityCheckpoint {
+export interface IRecoveryDurabilityStateCheckpoint {
+  checkpointState(overrides?: RecoveryDurableCheckpointOverrides): Promise<void>
+}
+
+export class RecoveryDurabilityCheckpointBarrier implements IRecoveryDurabilityCheckpoint, IRecoveryDurabilityStateCheckpoint {
   private coordinator: RecoveryDurableStateCoordinator | undefined
   private failure: Error | undefined
 
@@ -19,28 +23,25 @@ export class RecoveryDurabilityCheckpointBarrier implements IRecoveryDurabilityC
     this.coordinator = coordinator
   }
 
-  public isBound(): boolean {
-    return this.coordinator !== undefined
+  public isBound(): boolean { return this.coordinator !== undefined }
+  public assertMutationAllowed(): void { if (this.failure !== undefined) throw this.failure }
+
+  public checkpoint(request: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<void> {
+    return this.persist(request, overrides)
   }
 
-  public assertMutationAllowed(): void {
-    if (this.failure !== undefined) throw this.failure
+  public checkpointState(overrides?: RecoveryDurableCheckpointOverrides): Promise<void> {
+    return this.persist(undefined, overrides)
   }
 
-  public async checkpoint(
-    request: RecoveryDurableAuditRequest,
-    overrides?: RecoveryDurableCheckpointOverrides,
-  ): Promise<void> {
+  private async persist(request?: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<void> {
     this.assertMutationAllowed()
     if (this.coordinator === undefined) return
     try {
       await this.coordinator.checkpoint(request, overrides)
     } catch (error: unknown) {
       const cause = error instanceof Error ? error : new Error(String(error))
-      const failure = new Error(
-        `Recovery durability checkpoint failed; further mutations are disabled: ${cause.message}`,
-        { cause },
-      )
+      const failure = new Error(`Recovery durability checkpoint failed; further mutations are disabled: ${cause.message}`, { cause })
       this.failure = failure
       throw failure
     }

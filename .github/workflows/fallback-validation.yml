@@ -109,7 +109,7 @@ jobs:
           const ping = JSON.parse(lines[0])
           const load = JSON.parse(lines[1])
           if (ping.id !== 'package-ping' || ping.ok !== true || ping.available !== true) throw new Error('Packaged authority ping failed')
-          if (load.id !== 'package-load' || load.ok !== true || load.revision !== 0 || load.snapshot?.schemaVersion !== 1) throw new Error('Packaged authority load failed')
+          if (load.id !== 'package-load' || load.ok !== true || load.revision !== 0 || load.snapshot?.schemaVersion !== 2) throw new Error('Packaged authority load failed')
           NODE
       - name: Run installed control host with bundled authority resolution
         working-directory: /tmp/recovery-consumer

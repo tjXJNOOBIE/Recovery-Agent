@@ -7,6 +7,7 @@ import type {
   RecoveryDurableAuditEntry,
   RecoveryDurableSnapshot,
   RecoveryDurableStateResult,
+  RecoveryDurableWatchState,
 } from './RecoveryDurableState.js'
 
 export interface RecoveryDurableControlSurface {
@@ -17,6 +18,11 @@ export interface RecoveryDurableControlSurface {
 export interface RecoveryDurableSemanticWatchSurface {
   restore(definitions: readonly RecoverySemanticWatchDefinition[]): void
   list(): readonly RecoverySemanticWatchDefinition[]
+}
+
+export interface RecoveryDurableWatchStateSurface {
+  restoreDurableState(state: RecoveryDurableWatchState): void
+  exportDurableState(): RecoveryDurableWatchState
 }
 
 export interface RecoveryDurableAuditRequest {
@@ -33,11 +39,19 @@ export interface RecoveryDurableCheckpointOverrides {
 
 export type RecoveryDurableClock = () => number
 
+const EMPTY_WATCH_STATE: RecoveryDurableWatchState = {
+  nodeHealthIncidents: [],
+  certificateIncidents: [],
+  deploymentStates: [],
+  deploymentIncidents: [],
+}
+
 export class RecoveryDurableStateCoordinator {
   private readonly authority: IRecoveryStateAuthority
   private readonly control: RecoveryDurableControlSurface
   private readonly semanticWatches: RecoveryDurableSemanticWatchSurface
   private readonly clock: RecoveryDurableClock
+  private readonly watchState: RecoveryDurableWatchStateSurface | undefined
   private revision = 0
   private audit: readonly RecoveryDurableAuditEntry[] = []
   private hydrated = false
@@ -48,11 +62,13 @@ export class RecoveryDurableStateCoordinator {
     control: RecoveryDurableControlSurface,
     semanticWatches: RecoveryDurableSemanticWatchSurface,
     clock: RecoveryDurableClock = Date.now,
+    watchState?: RecoveryDurableWatchStateSurface,
   ) {
     this.authority = authority
     this.control = control
     this.semanticWatches = semanticWatches
     this.clock = clock
+    this.watchState = watchState
   }
 
   public async hydrate(): Promise<RecoveryDurableStateResult> {
@@ -64,62 +80,61 @@ export class RecoveryDurableStateCoordinator {
       restartAttempts: loaded.snapshot.restartAttempts,
     })
     this.semanticWatches.restore(loaded.snapshot.semanticWatches)
+    this.watchState?.restoreDurableState({
+      nodeHealthIncidents: loaded.snapshot.nodeHealthIncidents,
+      certificateIncidents: loaded.snapshot.certificateIncidents,
+      deploymentStates: loaded.snapshot.deploymentStates,
+      deploymentIncidents: loaded.snapshot.deploymentIncidents,
+    })
     this.revision = loaded.revision
     this.audit = loaded.snapshot.audit.map((entry) => ({ ...entry }))
     this.hydrated = true
     return loaded
   }
 
-  public currentRevision(): number {
-    this.requireHydrated()
-    return this.revision
-  }
+  public currentRevision(): number { this.requireHydrated(); return this.revision }
 
   public currentSnapshot(): RecoveryDurableSnapshot {
     this.requireHydrated()
     const controlState = this.control.exportDurableState()
+    const watchState = this.watchState?.exportDurableState() ?? EMPTY_WATCH_STATE
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       incidents: controlState.incidents,
       plans: controlState.plans,
       semanticWatches: this.semanticWatches.list(),
       restartAttempts: controlState.restartAttempts,
+      nodeHealthIncidents: watchState.nodeHealthIncidents,
+      certificateIncidents: watchState.certificateIncidents,
+      deploymentStates: watchState.deploymentStates,
+      deploymentIncidents: watchState.deploymentIncidents,
       audit: this.audit,
     }
   }
 
-  public checkpoint(
-    auditRequest?: RecoveryDurableAuditRequest,
-    overrides?: RecoveryDurableCheckpointOverrides,
-  ): Promise<RecoveryDurableStateResult> {
+  public checkpoint(auditRequest?: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<RecoveryDurableStateResult> {
     this.requireHydrated()
-    const run = this.checkpointTail.then(
-      () => this.performCheckpoint(auditRequest, overrides),
-      () => this.performCheckpoint(auditRequest, overrides),
-    )
+    const run = this.checkpointTail.then(() => this.performCheckpoint(auditRequest, overrides), () => this.performCheckpoint(auditRequest, overrides))
     this.checkpointTail = run.then(() => undefined, () => undefined)
     return run
   }
 
-  public async close(): Promise<void> {
-    await this.checkpointTail
-    await this.authority.close()
-  }
+  public async close(): Promise<void> { await this.checkpointTail; await this.authority.close() }
 
-  private async performCheckpoint(
-    auditRequest?: RecoveryDurableAuditRequest,
-    overrides?: RecoveryDurableCheckpointOverrides,
-  ): Promise<RecoveryDurableStateResult> {
-    const candidateAudit = auditRequest === undefined
-      ? this.audit
-      : [...this.audit, this.createAuditEntry(auditRequest)]
+  private async performCheckpoint(auditRequest?: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<RecoveryDurableStateResult> {
+    const candidateAudit = auditRequest === undefined ? this.audit : [...this.audit, this.createAuditEntry(auditRequest)]
     const controlState = this.control.exportDurableState()
+    const watchState = this.watchState?.exportDurableState() ?? EMPTY_WATCH_STATE
     const candidate: RecoveryDurableSnapshot = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       incidents: controlState.incidents,
       plans: controlState.plans,
       semanticWatches: overrides?.semanticWatches ?? this.semanticWatches.list(),
       restartAttempts: controlState.restartAttempts,
+      nodeHealthIncidents: watchState.nodeHealthIncidents,
+      certificateIncidents: watchState.certificateIncidents,
+      deploymentStates: watchState.deploymentStates,
+      deploymentIncidents: watchState.deploymentIncidents,
       audit: candidateAudit,
     }
     const committed = await this.authority.commit(this.revision, candidate)
@@ -134,32 +149,11 @@ export class RecoveryDurableStateCoordinator {
     const summary = this.nonBlank(request.summary, 'Recovery durable audit summary')
     const nowMs = this.clock()
     if (!Number.isFinite(nowMs)) throw new Error('Recovery durable clock must return a finite timestamp')
-    const nodeId = this.optionalText(request.nodeId)
-    const serviceId = this.optionalText(request.serviceId)
-    return {
-      id: randomUUID(),
-      at: new Date(nowMs).toISOString(),
-      actor,
-      action,
-      summary,
-      ...(nodeId === undefined ? {} : { nodeId }),
-      ...(serviceId === undefined ? {} : { serviceId }),
-    }
+    const nodeId = this.optionalText(request.nodeId); const serviceId = this.optionalText(request.serviceId)
+    return { id: randomUUID(), at: new Date(nowMs).toISOString(), actor, action, summary, ...(nodeId === undefined ? {} : { nodeId }), ...(serviceId === undefined ? {} : { serviceId }) }
   }
 
-  private requireHydrated(): void {
-    if (!this.hydrated) throw new Error('Recovery durable state coordinator is not hydrated')
-  }
-
-  private nonBlank(value: string, label: string): string {
-    const normalized = value.trim()
-    if (normalized.length === 0) throw new Error(`${label} must be non-blank`)
-    return normalized
-  }
-
-  private optionalText(value: string | undefined): string | undefined {
-    if (value === undefined) return undefined
-    const normalized = value.trim()
-    return normalized.length === 0 ? undefined : normalized
-  }
+  private requireHydrated(): void { if (!this.hydrated) throw new Error('Recovery durable state coordinator is not hydrated') }
+  private nonBlank(value: string, label: string): string { const normalized = value.trim(); if (normalized.length === 0) throw new Error(`${label} must be non-blank`); return normalized }
+  private optionalText(value: string | undefined): string | undefined { if (value === undefined) return undefined; const normalized = value.trim(); return normalized.length === 0 ? undefined : normalized }
 }

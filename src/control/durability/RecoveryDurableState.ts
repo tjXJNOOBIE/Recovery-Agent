@@ -1,5 +1,11 @@
 import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
+import type { CertificateHealthIncident } from '../watch/certificate/RecoveryCertificateWatchService.js'
+import type {
+  DeploymentHealthIncident,
+  RecoveryDeploymentWatchState,
+} from '../watch/deployment/RecoveryDeploymentWatchService.js'
+import type { NodeHealthIncident } from '../watch/node/NodeHealthIncident.js'
 import type { RecoverySemanticWatchDefinition } from '../watch/semantic/RecoverySemanticWatch.js'
 
 export interface RecoveryDurableRestartAttempt {
@@ -18,12 +24,23 @@ export interface RecoveryDurableAuditEntry {
   readonly serviceId?: string
 }
 
+export interface RecoveryDurableWatchState {
+  readonly nodeHealthIncidents: readonly NodeHealthIncident[]
+  readonly certificateIncidents: readonly CertificateHealthIncident[]
+  readonly deploymentStates: readonly RecoveryDeploymentWatchState[]
+  readonly deploymentIncidents: readonly DeploymentHealthIncident[]
+}
+
 export interface RecoveryDurableSnapshot {
-  readonly schemaVersion: 1
+  readonly schemaVersion: 2
   readonly incidents: readonly IncidentRecord[]
   readonly plans: readonly RecoveryPlan[]
   readonly semanticWatches: readonly RecoverySemanticWatchDefinition[]
   readonly restartAttempts: readonly RecoveryDurableRestartAttempt[]
+  readonly nodeHealthIncidents: readonly NodeHealthIncident[]
+  readonly certificateIncidents: readonly CertificateHealthIncident[]
+  readonly deploymentStates: readonly RecoveryDeploymentWatchState[]
+  readonly deploymentIncidents: readonly DeploymentHealthIncident[]
   readonly audit: readonly RecoveryDurableAuditEntry[]
 }
 
