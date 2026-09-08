@@ -4,7 +4,7 @@ Recovery Agent is a control-host recovery runtime for Linux services. It keeps t
 
 **Agents for Humans track:** Professional
 
-> **Current status:** Draft E2E foundation. The simulated recovery path, recurring service watches, typed Strands recovery proposals, and explicit approval gate are runnable. Real remote-node transport, physical npm/Strands/MCP SDK validation, durable incident/plan storage, broader watch packs, and broader adapters remain promotion gates.
+> **Current status:** Draft E2E foundation. The simulated recovery path, recurring service watches, typed Strands recovery proposals, explicit human approval gate, per-target recovery coalescing, pending-plan suppression, and human-escalation suppression are runnable. Real remote-node transport, physical npm/Strands/MCP SDK validation, durable incident/plan storage, broader watch packs, and broader adapters remain promotion gates.
 
 ## What is implemented
 
@@ -19,7 +19,8 @@ MCP host
           -> bounded recovery policy
           -> per-target in-flight recovery coalescing
           -> pending-plan restart suppression
-          -> verify after mutation
+          -> human-required restart suppression
+          -> fresh verification after every mutation or suppression check
           -> Strands investigation + strict typed proposal only after deterministic recovery is exhausted
           -> owner-only Unix approval socket before elevated plan execution
 ```
@@ -86,7 +87,9 @@ Current MCP tools:
 
 A pending elevated plan becomes a suppression barrier for that node/service. Repeated watch or manual recovery calls perform a fresh inspection but do **not** start another restart cycle, incident, or plan while the first plan waits for a human decision. If the service recovers through another operator or external system before approval, Recovery Agent marks the unexecuted plan `superseded` and resolves the incident.
 
-Concurrent recovery calls for the same node/service are also coalesced into one in-flight operation. Different service targets remain independent.
+A `human_required` incident is also a suppression barrier. Once automatic recovery has explicitly handed an unresolved incident to a human, later watch or manual recovery calls stay read-only. They return the same escalated incident while the service remains unhealthy, without consuming another restart budget or reinvoking Strands. If a later inspection proves that the service recovered externally, Recovery Agent resolves that existing incident without running another automatic mutation.
+
+Concurrent recovery calls for the same node/service are coalesced into one in-flight operation. Different service targets remain independent.
 
 Approval and rejection are intentionally **not MCP tools**. The MCP host can list and inspect pending plans, but it cannot approve its own proposal. On the control host, use the owner-only Unix socket through the CLI:
 
@@ -112,7 +115,7 @@ Configured services are watched by default when the MCP control host runs. Each 
 }
 ```
 
-The watch service is deliberately product-specific rather than a second general scheduling framework. A due watch calls the same `recoverService` path used by MCP, so health checks, recovery budgets, pending-plan suppression, Strands escalation, and verification cannot quietly drift into separate behavior. Overlapping watch cycles are serialized and watch failures are recorded in runtime watch state instead of killing the recurring loop.
+The watch service is deliberately product-specific rather than a second general scheduling framework. A due watch calls the same `recoverService` path used by MCP, so health checks, recovery budgets, pending-plan suppression, human-escalation suppression, Strands escalation, and verification cannot quietly drift into separate behavior. Overlapping watch cycles are serialized and watch failures are recorded in runtime watch state instead of killing the recurring loop.
 
 `watch_list` exposes the latest state for each configured watch. `watch_run` forces all configured watches to run immediately through the bounded recovery path.
 
