@@ -1,10 +1,12 @@
 import type { RecoveryWatchSurface } from './RecoveryWatchSurface.js'
 import type { RecoveryWatchService } from './RecoveryWatchService.js'
 import type { RecoveryNodeWatchService } from './node/RecoveryNodeWatchService.js'
+import type { RecoveryReadinessWatchService } from './readiness/RecoveryReadinessWatchService.js'
 
 export class RecoveryWatchCoordinator implements RecoveryWatchSurface {
   private readonly serviceWatchService: RecoveryWatchService
   private readonly nodeWatchService: RecoveryNodeWatchService
+  private readonly readinessWatchService: RecoveryReadinessWatchService | undefined
   private readonly pulseMs: number
   private timer: NodeJS.Timeout | undefined
   private inFlight: Promise<unknown> | undefined
@@ -13,10 +15,12 @@ export class RecoveryWatchCoordinator implements RecoveryWatchSurface {
     serviceWatchService: RecoveryWatchService,
     nodeWatchService: RecoveryNodeWatchService,
     pulseMs = 1_000,
+    readinessWatchService?: RecoveryReadinessWatchService,
   ) {
     if (!Number.isInteger(pulseMs) || pulseMs <= 0) throw new Error('Recovery watch coordinator pulse must be a positive integer number of milliseconds')
     this.serviceWatchService = serviceWatchService
     this.nodeWatchService = nodeWatchService
+    this.readinessWatchService = readinessWatchService
     this.pulseMs = pulseMs
   }
 
@@ -32,6 +36,7 @@ export class RecoveryWatchCoordinator implements RecoveryWatchSurface {
       services: this.serviceWatchService.listStates(),
       nodes: this.nodeWatchService.listStates(),
       nodeHealthIncidents: this.nodeWatchService.listIncidents(),
+      ...(this.readinessWatchService === undefined ? {} : { readiness: this.readinessWatchService.inspectState() }),
     }
   }
 
@@ -39,7 +44,10 @@ export class RecoveryWatchCoordinator implements RecoveryWatchSurface {
     if (this.inFlight !== undefined) await this.inFlight
     const nodes = await this.nodeWatchService.runAllNow(nowMs)
     const services = await this.serviceWatchService.runAllNow(nowMs)
-    return { nodes, services }
+    const readiness = this.readinessWatchService === undefined
+      ? undefined
+      : await this.readinessWatchService.runNow(nowMs)
+    return { nodes, services, ...(readiness === undefined ? {} : { readiness }) }
   }
 
   public async close(): Promise<void> {
@@ -47,6 +55,7 @@ export class RecoveryWatchCoordinator implements RecoveryWatchSurface {
     this.timer = undefined
     if (timer !== undefined) clearInterval(timer)
     if (this.inFlight !== undefined) await this.inFlight
+    await this.readinessWatchService?.close()
     await this.nodeWatchService.close()
     await this.serviceWatchService.close()
   }
@@ -64,7 +73,10 @@ export class RecoveryWatchCoordinator implements RecoveryWatchSurface {
   private async runDueWatches(nowMs = Date.now()): Promise<unknown> {
     const nodes = await this.nodeWatchService.runDueWatches(nowMs)
     const services = await this.serviceWatchService.runDueWatches(nowMs)
-    return { nodes, services }
+    const readiness = this.readinessWatchService === undefined
+      ? undefined
+      : await this.readinessWatchService.runDueWatch(nowMs)
+    return { nodes, services, ...(readiness === undefined ? {} : { readiness }) }
   }
 
   private clearInFlight(execution: Promise<unknown>): void {

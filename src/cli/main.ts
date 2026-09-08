@@ -15,6 +15,7 @@ import { RecoveryWatchDefinitionBuilder } from '../control/watch/RecoveryWatchDe
 import { RecoveryWatchService } from '../control/watch/RecoveryWatchService.js'
 import { RecoveryNodeWatchDefinitionBuilder } from '../control/watch/node/RecoveryNodeWatchDefinitionBuilder.js'
 import { RecoveryNodeWatchService } from '../control/watch/node/RecoveryNodeWatchService.js'
+import { RecoveryReadinessWatchService } from '../control/watch/readiness/RecoveryReadinessWatchService.js'
 import { RecoveryDemoHandler } from '../demo/RecoveryDemoHandler.js'
 import { RecoveryMcpToolRouter } from '../mcp/RecoveryMcpToolRouter.js'
 import { RecoveryMcpServer } from '../mcp/RecoveryMcpServer.js'
@@ -92,7 +93,8 @@ async function main(): Promise<void> {
     const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env).build(config)
     const serviceWatches = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
     const nodeWatches = new RecoveryNodeWatchService(control, new RecoveryNodeWatchDefinitionBuilder().build(config))
-    const watches = new RecoveryWatchCoordinator(serviceWatches, nodeWatches)
+    const readinessWatch = new RecoveryReadinessWatchService(control)
+    const watches = new RecoveryWatchCoordinator(serviceWatches, nodeWatches, 1_000, readinessWatch)
     const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watches))
     const approvalToken = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
     const approvalServer = approvalToken === undefined || approvalToken.length === 0

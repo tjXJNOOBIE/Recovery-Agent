@@ -6,6 +6,8 @@ import type { InMemoryIncidentRepository } from '../incident/repository/InMemory
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
 import type { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
+import type { RecoveryReadinessReport } from '../readiness/RecoveryReadiness.js'
+import { RecoveryReadinessInspector } from '../readiness/RecoveryReadinessInspector.js'
 import type { RecoveryOperationGate } from '../recovery/RecoveryOperationGate.js'
 import type { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
 import type { RecoveryRunResult } from '../recovery/RecoveryRunResult.js'
@@ -29,6 +31,7 @@ export class RecoveryControlRuntime {
   private readonly incidentRepository: InMemoryIncidentRepository
   private readonly planControl: RecoveryPlanControl
   private readonly operationGate: RecoveryOperationGate
+  private readonly readinessInspector: RecoveryReadinessInspector
 
   public constructor(
     gateways: readonly INodeAgentGateway[],
@@ -37,6 +40,7 @@ export class RecoveryControlRuntime {
     incidentRepository: InMemoryIncidentRepository,
     planControl: RecoveryPlanControl,
     operationGate: RecoveryOperationGate,
+    readinessInspector?: RecoveryReadinessInspector,
   ) {
     this.gateways = [...gateways]
     this.policies = [...policies]
@@ -44,6 +48,13 @@ export class RecoveryControlRuntime {
     this.incidentRepository = incidentRepository
     this.planControl = planControl
     this.operationGate = operationGate
+    this.readinessInspector = readinessInspector ?? new RecoveryReadinessInspector(
+      this.gateways,
+      this.policies,
+      this.recoveryOrchestrator,
+      this.incidentRepository,
+      this.planControl,
+    )
   }
 
   public async fleetStatus(): Promise<FleetStatusResult> {
@@ -73,6 +84,10 @@ export class RecoveryControlRuntime {
 
   public inspectService(nodeId: string, serviceId: string): Promise<ServiceSnapshot> {
     return this.requireGateway(nodeId).inspectService(serviceId)
+  }
+
+  public inspectRecoveryReadiness(): Promise<RecoveryReadinessReport> {
+    return this.readinessInspector.inspect()
   }
 
   public recoverService(nodeId: string, serviceId: string): Promise<RecoveryRunResult> {

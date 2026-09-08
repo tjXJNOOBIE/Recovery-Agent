@@ -41,6 +41,12 @@ export class RecoveryMcpServer {
       annotations: { readOnlyHint: true },
     }, async () => this.toolResult(await this.toolRouter.callTool('fleet_status')))
 
+    server.registerTool('recovery_readiness', {
+      description: 'Inspect whether configured services can be recovered right now and what blocks automatic recovery.',
+      inputSchema: emptyInputSchema,
+      annotations: { readOnlyHint: true },
+    }, async () => this.toolResult(await this.toolRouter.callTool('recovery_readiness')))
+
     server.registerTool('node_inspect', {
       description: 'Inspect one configured node.',
       inputSchema: nodeInputSchema,
