@@ -60,7 +60,7 @@ export class RecoveryControlRuntime {
     return this.operationGate.run(
       nodeId,
       serviceId,
-      () => this.recoverOrRespectPendingPlan(gateway, policy),
+      () => this.recoverOrRespectSuppression(gateway, policy),
     )
   }
 
@@ -112,45 +112,71 @@ export class RecoveryControlRuntime {
     }
   }
 
-  private async recoverOrRespectPendingPlan(
+  private async recoverOrRespectSuppression(
     gateway: INodeAgentGateway,
     policy: ServiceRecoveryPolicy,
   ): Promise<RecoveryRunResult> {
     const pendingPlan = this.planControl.findPending(policy.nodeId, policy.serviceId)
-    if (pendingPlan === undefined) {
-      return this.recoveryOrchestrator.recover(gateway, policy)
-    }
+    if (pendingPlan !== undefined) {
+      const snapshot = await gateway.inspectService(policy.serviceId)
+      let incident = this.incidentRepository.require(pendingPlan.incidentId)
 
-    const snapshot = await gateway.inspectService(policy.serviceId)
-    let incident = this.incidentRepository.require(pendingPlan.incidentId)
+      if (snapshot.lifecycleState === policy.expectedState && snapshot.healthy) {
+        const supersededPlan = this.planControl.supersede(
+          pendingPlan.id,
+          'Service recovered before approval; pending plan was not executed',
+        )
+        incident = this.incidentRepository.append(
+          incident.id,
+          'resolved',
+          `Service recovered before approval; recovery plan ${pendingPlan.id} superseded without execution`,
+          'resolved',
+        )
+        return {
+          status: 'healthy',
+          snapshot,
+          incident,
+          recoveryPlan: supersededPlan,
+          restartAttempts: 0,
+        }
+      }
 
-    if (snapshot.lifecycleState === policy.expectedState && snapshot.healthy) {
-      const supersededPlan = this.planControl.supersede(
-        pendingPlan.id,
-        'Service recovered before approval; pending plan was not executed',
-      )
-      incident = this.incidentRepository.append(
-        incident.id,
-        'resolved',
-        `Service recovered before approval; recovery plan ${pendingPlan.id} superseded without execution`,
-        'resolved',
-      )
       return {
-        status: 'healthy',
+        status: 'approval_required',
         snapshot,
         incident,
-        recoveryPlan: supersededPlan,
+        recoveryPlan: pendingPlan,
         restartAttempts: 0,
       }
     }
 
-    return {
-      status: 'approval_required',
-      snapshot,
-      incident,
-      recoveryPlan: pendingPlan,
-      restartAttempts: 0,
+    const humanRequiredIncident = this.incidentRepository.findHumanRequired(policy.nodeId, policy.serviceId)
+    if (humanRequiredIncident !== undefined) {
+      const snapshot = await gateway.inspectService(policy.serviceId)
+      if (snapshot.lifecycleState === policy.expectedState && snapshot.healthy) {
+        const resolved = this.incidentRepository.append(
+          humanRequiredIncident.id,
+          'resolved',
+          'Service recovered while awaiting human intervention; no additional automatic recovery executed',
+          'resolved',
+        )
+        return {
+          status: 'healthy',
+          snapshot,
+          incident: resolved,
+          restartAttempts: 0,
+        }
+      }
+
+      return {
+        status: 'escalated',
+        snapshot,
+        incident: humanRequiredIncident,
+        restartAttempts: 0,
+      }
     }
+
+    return this.recoveryOrchestrator.recover(gateway, policy)
   }
 
   private requireGateway(nodeId: string): INodeAgentGateway {

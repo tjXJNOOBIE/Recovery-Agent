@@ -38,6 +38,21 @@ export class InMemoryIncidentRepository {
     return this.incidents.find((incident) => incident.id === id)
   }
 
+  public findHumanRequired(nodeId: string, serviceId: string): IncidentRecord | undefined {
+    for (let index = this.incidents.length - 1; index >= 0; index -= 1) {
+      const incident = this.incidents[index]
+      if (
+        incident !== undefined
+        && incident.nodeId === nodeId
+        && incident.serviceId === serviceId
+        && incident.status === 'human_required'
+      ) {
+        return incident
+      }
+    }
+    return undefined
+  }
+
   public require(id: string): IncidentRecord {
     const incident = this.find(id)
     if (incident === undefined) {
