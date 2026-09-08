@@ -4,126 +4,54 @@
 > **Hackathon track:** Professional  
 > **Shared agent runtime:** `@tjxjnoobie/custom-strands-bridge`  
 > **MCP server runtime:** `@modelcontextprotocol/server` v2  
-> **Owns:** Recovery Agent product policy, node/control protocol, incident/recovery flow, MCP tool exposure, approval boundary, and demo behavior  
-> **Must not define:** a second Strands framework, Tavall Java DI/cache/registry/database/concurrency/event/scheduler systems, arbitrary remote shell execution, or unverified production capabilities
+> **Owns:** Recovery Agent product policy, node/control protocol, deterministic recovery, watch lifecycle, incident/plan state, MCP exposure, and human approval boundary  
+> **Must not define:** a second Strands framework, Tavall Java infrastructure, arbitrary remote shell execution, or unverified production capabilities
 
-## About
+## Product Contract
 
-Recovery Agent keeps AI execution on a control host while small node agents expose bounded operations on machines that run real services. Health evaluation, authorization, mutation, recovery budgets, target selection, approval verification, and post-action verification remain deterministic. Strands is invoked only after deterministic recovery cannot safely resolve an incident.
+Recovery Agent keeps AI execution on a control host while small node agents expose bounded operations on machines that run real services.
 
-The product rule is:
+> Deterministic software observes, authorizes, budgets, orders, executes, and verifies. Strands interprets, investigates, plans, and explains.
 
-> Deterministic software observes, authorizes, executes, and verifies. Strands interprets, investigates, plans, and explains.
+AI is not the mutation or authorization boundary.
 
-## Ownership Rules
-
-Recovery Agent owns:
-
-- node/service health snapshots;
-- the control-host node composition snapshot;
-- service recovery policies and restart budgets;
-- incident and typed recovery-plan lifecycle;
-- typed node action routing;
-- deterministic verification after mutation;
-- per-target in-flight recovery operation ownership;
-- pending-plan suppression and reconciliation;
-- built-in service-watch lifecycle;
-- MCP tool exposure;
-- the control-host-only approval socket;
-- demo scenarios and simulation labeling;
-- product prompts and Strands investigation/planning context.
-
-Connected runtimes own:
-
-- systemd service lifecycle and process state;
-- model/provider credentials;
-- Strands lifecycle and model/tool loop through `custom-strands-bridge`;
-- any future Tavall Java infrastructure reached through typed MCP/tool boundaries.
-
-Recovery Agent must not expose arbitrary shell execution as a normal recovery capability.
-
-## Current E2E Runtime Flow
+## Current E2E Topology
 
 ```text
 MCP host
   -> official MCP stdio server
-      -> RecoveryMcpToolRouter
-          -> RecoveryControlRuntime
-              -> RecoveryOperationGate
-                  -> coalesce concurrent recovery for one node/service
-              -> pending RecoveryPlan check
-                  -> unhealthy: return same approval-required plan without mutation
-                  -> healthy: supersede unexecuted plan and resolve incident
-              -> HttpNodeAgentGateway
-                  -> NodeAgentHttpServer
-                      -> SystemdNodeServiceRuntime
-              -> RecoveryWatchService
-                  -> configured interval -> bounded recoverService
-              -> RecoveryOrchestrator
-                  -> RecoveryPolicyResolver
-                  -> InMemoryIncidentRepository
-                  -> StrandsRecoveryInvestigator
-                  -> StrandsRecoveryPlanner -> strict proposal parser
-                  -> pending RecoveryPlan
+      -> RecoveryControlRuntime
+          -> partial-fleet inspection
+          -> RecoveryOperationGate
+          -> suppression barriers
+          -> dependency health gate
+          -> dependency-ordered health sweep
+          -> HttpNodeAgentGateway
+              -> NodeAgentHttpServer
+                  -> SystemdNodeServiceRuntime
+          -> RecoveryWatchService
+          -> RecoveryOrchestrator
+              -> RecoveryPolicyResolver
+              -> RecoveryAutomaticRestartBudget
+              -> InMemoryIncidentRepository
+              -> StrandsRecoveryInvestigator
+              -> StrandsRecoveryPlanner
+              -> strict RecoveryPlan proposal parser
 
 control-host human
-  -> recovery-agent approve/reject CLI
-      -> owner-only Unix approval socket (0600)
+  -> recovery-agent approve/reject
+      -> owner-only Unix socket (0600)
+          -> separate approval token
           -> RecoveryPlanApprovalHandler
-              -> out-of-band token verification
-              -> one approved typed action
+          -> ApprovedRecoveryExecutor
+              -> dependency re-check
+              -> one typed action
               -> fresh verification
 ```
 
-### Recovery flow
-
-```text
-recover node/service
-  -> coalesce with an existing in-flight recovery for the same target
-  -> pending elevated plan exists?
-      -> inspect service only
-      -> still unhealthy: return the existing plan; do not restart or open another incident
-      -> healthy: mark plan superseded without execution; resolve incident
-  -> otherwise inspect service
-      -> healthy: return without mutation
-      -> unhealthy: open incident
-          -> unknown state: refuse mutation and escalate
-          -> restart allowed: execute typed restart
-              -> inspect again
-              -> healthy: resolve incident
-              -> unhealthy and budget remains: retry
-              -> budget exhausted: invoke Strands investigation
-                  -> invoke strict bounded planner
-                  -> none/invalid proposal: require human intervention
-                  -> restart_service proposal: bind target from incident
-                      -> store pending elevated plan
-                      -> MCP may inspect, but cannot approve
-                      -> owner uses control-host approval CLI/socket
-                          -> verify separate approval token
-                          -> execute exactly one typed restart
-                          -> inspect again
-                          -> resolve or return to human_required
-```
-
-A mutation result never proves recovery. The control host always performs a fresh service inspection after the mutation.
-
-## Recovery Operation and Pending-Plan Barriers
-
-`RecoveryOperationGate` owns only in-flight recovery promises. It is product operation state, not a generic concurrency framework. Calls targeting the same node/service share the same active recovery promise; different targets remain independent. This prevents a manual MCP call and a due watch from starting two recovery flows for the same service at the same time.
-
-A `pending_approval` plan is a second, longer-lived barrier. While a pending plan exists for a node/service:
-
-- automatic recovery does not spend another restart budget;
-- watches and manual recovery calls do not create duplicate incidents or plans;
-- every re-entry performs a fresh read-only service inspection;
-- an unhealthy service returns the same pending plan and incident;
-- if the service recovered externally, the pending plan transitions to `superseded` without execution and its incident resolves.
-
-The barrier ends only when the plan is approved, rejected, failed/executed by the approval path, or superseded by verified external recovery. This prevents an approval queue from accidentally becoming a 30-second restart machine because a watch kept firing. A surprisingly low bar, yet here we are.
-
 ## Node Boundary
 
-The node HTTP server currently exposes only:
+The node HTTP server exposes only:
 
 ```text
 GET  /v1/node
@@ -131,87 +59,259 @@ GET  /v1/services/:serviceId
 POST /v1/services/:serviceId/restart
 ```
 
-A public `serviceId` is mapped by node configuration to one fixed systemd unit. Remote callers cannot choose the unit string and cannot submit a shell command.
+Public service IDs map to fixed configured systemd units. The caller cannot provide a unit name, command, or arbitrary shell arguments.
 
-Node authentication is currently a per-node bearer secret loaded from an environment variable. The server defaults to loopback. This is adequate for local/demo validation but is **not the final public-network transport**. Remote deployment requires a private network/tunnel or trusted TLS termination until outbound enrollment, credential rotation, and mutual-authenticated transport are implemented.
+Node authentication currently uses a per-node bearer secret loaded from the environment. The server defaults to loopback. Public-network transport is not claimed yet; remote production deployment still requires a private network/tunnel or trusted TLS termination until outbound enrollment and mutual authentication are implemented.
 
 ## Control Configuration
 
-Control config owns the node/service policy snapshot:
+A service policy may include restart budget, watch, and dependency behavior:
 
 ```json
 {
-  "nodes": [
-    {
-      "id": "production-east-01",
-      "baseUrl": "http://127.0.0.1:7281",
-      "tokenEnvironmentVariable": "RECOVERY_NODE_TOKEN_EAST_01",
-      "services": [
-        {
-          "id": "payments-api",
-          "restartAllowed": true,
-          "maxRestartAttempts": 2,
-          "watchEnabled": true,
-          "watchIntervalSeconds": 30
-        }
-      ]
-    }
+  "id": "payments-api",
+  "restartAllowed": true,
+  "maxRestartAttempts": 2,
+  "restartBudgetWindowSeconds": 600,
+  "watchEnabled": true,
+  "watchIntervalSeconds": 30,
+  "dependencies": [
+    { "serviceId": "postgres" }
   ]
 }
 ```
 
-Secrets do not live in the config document.
+`dependencies[].nodeId` is optional and defaults to the owning node.
 
-Control-host approval environment:
+Control configuration validates:
 
-- `RECOVERY_APPROVAL_TOKEN`: optional separate secret. Without it, elevated-plan approval is disabled.
-- `RECOVERY_APPROVAL_SOCKET`: optional Unix-socket path override. Otherwise a per-user path beneath the OS temp directory is used.
+- unique node IDs;
+- unique service IDs per node;
+- dependency targets exist;
+- no self-dependencies;
+- no duplicate dependencies;
+- no dependency cycles;
+- positive restart-budget/watch windows.
+
+Secrets remain environment-owned.
+
+## Partial-Fleet Inspection
+
+`fleet_status` isolates each node inspection. One unreachable node does not fail the entire request.
+
+The result contains:
+
+- reachable `nodes` snapshots;
+- `unreachableNodes` with node ID and error evidence;
+- healthy/unhealthy service counts derived from reachable nodes.
+
+`health_sweep` continues bounded work on reachable unhealthy services. It does not attempt to infer service state on an unreachable node.
+
+`node_inspect` provides direct read-only inspection of one configured node.
+
+## Recovery Ordering and Dependency Gate
+
+Declared dependencies are deterministic mutation prerequisites.
+
+For an unhealthy target:
+
+1. Recovery Agent verifies declared dependencies.
+2. If any dependency is unhealthy, the target receives a `dependency_blocked` incident.
+3. The target receives no restart attempt, no restart-budget consumption, and no Strands escalation while blocked.
+4. Later recovery calls remain read-only while dependencies are unhealthy.
+5. Once all dependencies are healthy, the dependency block is resolved and normal bounded target recovery resumes.
+
+`health_sweep` orders configured unhealthy targets by dependency depth, allowing a dependency to recover before its dependent in the same sweep.
+
+`ApprovedRecoveryExecutor` re-checks dependency health immediately before an approved mutation. Explicit human approval does not bypass an unhealthy dependency.
+
+## Automatic Restart Budget
+
+`RecoveryAutomaticRestartBudget` makes `maxRestartAttempts` a rolling automatic-recovery ceiling rather than a fresh allowance for each incident invocation.
+
+Default window:
+
+```text
+600 seconds
+```
+
+Rules:
+
+- every actual automatic restart consumes one slot;
+- a successful restart still consumes budget;
+- attempts are scoped by node/service target;
+- expired attempts leave the rolling window;
+- budget is consumed before the mutation is issued;
+- when no slot remains, no restart executes;
+- budget exhaustion is attached to the incident timeline before Strands investigation/planning.
+
+The automatic budget ledger is process-local today. A control-host restart resets it. Durable budget authority is therefore a production promotion gate and must be implemented through an appropriate owning persistence boundary rather than casually recreating Tavall Database inside this TypeScript product.
+
+Human-approved elevated recovery is intentionally outside the automatic restart ledger. It remains bounded by the separate human approval path and still re-checks policy/dependencies and verifies afterward.
+
+## Suppression Barriers
+
+Recovery Agent has multiple deterministic barriers that prevent repeating automatic work after ownership changes.
+
+### In-flight operation barrier
+
+`RecoveryOperationGate` coalesces concurrent recovery calls for the same node/service into one promise. Different targets remain independent.
+
+### Pending-plan barrier
+
+While a plan is `pending_approval`:
+
+- automatic mutation is disabled for that target;
+- watches/manual calls perform fresh inspection only;
+- no duplicate incident or plan is created;
+- verified external recovery marks the unexecuted plan `superseded` and resolves its incident.
+
+### Human-required barrier
+
+When an incident becomes `human_required` without a pending plan:
+
+- automatic mutation is disabled;
+- later watches/manual calls return the same incident while unhealthy;
+- restart budget is not spent again;
+- Strands is not reinvoked;
+- verified external recovery resolves the existing incident without mutation.
+
+### Dependency-blocked barrier
+
+While declared dependencies are unhealthy:
+
+- the dependent receives no mutation;
+- the existing dependency-blocked incident is reused;
+- the block clears only after prerequisite health is freshly verified.
+
+## Deterministic Recovery Flow
+
+```text
+recover node/service
+  -> join same-target in-flight operation if present
+  -> pending plan?
+      -> read-only inspect -> approval_required or superseded/healthy
+  -> human-required incident?
+      -> read-only inspect -> escalated or resolved/healthy
+  -> inspect target
+      -> healthy -> return
+  -> dependencies healthy?
+      -> no -> dependency_blocked, zero mutation
+  -> policy says restart?
+      -> rolling budget slot available?
+          -> no -> zero mutation, investigate
+          -> yes -> typed restart -> fresh inspect
+              -> healthy -> resolve
+              -> unhealthy -> continue only while budget allows
+  -> deterministic path exhausted
+      -> Strands investigation
+      -> strict bounded proposal
+          -> none/invalid -> human_required
+          -> restart_service -> target bound from incident -> pending_approval
+```
+
+A mutation response is never accepted as proof of recovery. Fresh inspection is mandatory.
 
 ## MCP Surface
-
-Recovery Agent consumes the official MCP TypeScript server SDK v2 rather than implementing its own MCP transport.
 
 Current model-facing tools:
 
 | Tool | Mutation | Purpose |
 | --- | --- | --- |
-| `fleet_status` | No | Inspect configured nodes/services. |
+| `fleet_status` | No | Inspect reachable fleet and unreachable-node evidence. |
+| `node_inspect` | No | Inspect one configured node. |
 | `service_inspect` | No | Inspect one configured service. |
-| `service_recover` | Bounded | Run policy-controlled recovery for one service. |
-| `health_sweep` | Bounded | Inspect configured services and recover unhealthy ones within policy. |
-| `watch_list` | No | List built-in watch configuration and latest runtime state. |
-| `watch_run` | Bounded | Force configured service watches to execute now. |
-| `incident_list` | No | List incidents in the current control runtime. |
+| `service_recover` | Bounded | Run deterministic policy-controlled recovery. |
+| `health_sweep` | Bounded | Recover reachable unhealthy services in dependency order. |
+| `watch_list` | No | Inspect built-in service-watch state. |
+| `watch_run` | Bounded | Force configured service watches now. |
+| `incident_list` | No | List process-local incidents. |
 | `incident_inspect` | No | Inspect one incident timeline. |
-| `recovery_plan_list` | No | List typed plans proposed after automatic recovery is exhausted. |
-| `recovery_plan_inspect` | No | Inspect one plan and its state. |
+| `recovery_plan_list` | No | List typed recovery plans. |
+| `recovery_plan_inspect` | No | Inspect one plan and approval state. |
 
-**Approval and rejection are not MCP tools.** The model-facing host can inspect a proposed plan but cannot execute the approval path.
+Approval/rejection are intentionally absent from MCP.
 
-## Typed Recovery Plans
+## Strands Boundary
 
-After deterministic recovery is exhausted, Strands still does not gain an executor. `StrandsRecoveryPlanner` receives bounded incident evidence and must return exactly one strict JSON object:
+Recovery Agent has no direct `@strands-agents/sdk` dependency. It consumes `IStrandsAgentRuntimeBootstrap` from `@tjxjnoobie/custom-strands-bridge`.
+
+Current focused roles:
+
+1. `StrandsRecoveryInvestigator` returns an evidence-based diagnosis after deterministic exhaustion.
+2. `StrandsRecoveryPlanner` may return one strict proposal.
+
+The planner output must be exact JSON with only:
 
 ```json
 {
   "action": "restart_service",
-  "rationale": "One additional approved restart may distinguish a transient failure."
+  "rationale": "..."
 }
 ```
 
-The only accepted actions are `restart_service` and `none`. `RecoveryPlanProposalParser` rejects:
+or `action: "none"`.
 
-- markdown fencing;
-- additional fields;
-- alternate node/service targets;
-- shell commands or arguments;
-- credentials;
-- unknown action names;
-- blank or oversized rationale text.
+The parser rejects extra fields, target identifiers, commands, credentials, markdown fencing, unknown actions, and invalid rationale. Node/service identity comes from deterministic incident state.
 
-Node and service identity are copied from the incident by deterministic code; the model never chooses them. A valid restart proposal becomes an `elevated` `RecoveryPlan` with status `pending_approval`.
+Neither Strands role can mutate, retarget, or approve.
 
-Plan states currently include:
+The larger triage/specialist/critic/postmortem graph remains a future slice and must not be presented as implemented.
+
+## Human Approval Boundary
+
+When `RECOVERY_APPROVAL_TOKEN` is configured, the control process creates an owner-only Unix approval socket. Its path defaults per-user under the OS temporary directory and may be overridden with `RECOVERY_APPROVAL_SOCKET`.
+
+Socket rules:
+
+- mode `0600`;
+- stale-path cleanup refuses regular files;
+- stale sockets owned by another user are refused;
+- request bodies are bounded;
+- Bearer approval token is verified locally;
+- the model-facing MCP catalog cannot call the approval path.
+
+Human CLI:
+
+```bash
+recovery-agent approve <plan-id>
+recovery-agent reject <plan-id> 'reason'
+```
+
+A valid approval executes one already-bound typed action, re-checks declared dependencies, and performs fresh health verification.
+
+## Watches
+
+Configured service watches default to enabled at 30 seconds. `RecoveryWatchService` is product lifecycle behavior, not a second generic scheduler framework.
+
+A due watch delegates to `RecoveryControlRuntime.recoverService`, so it automatically inherits:
+
+- in-flight coalescing;
+- pending-plan suppression;
+- human-required suppression;
+- dependency blocking;
+- rolling budgets;
+- Strands escalation;
+- mandatory verification.
+
+Watch failures are recorded in process-local watch state rather than terminating future cycles.
+
+## Incident and Plan State
+
+Current incident and plan repositories are explicitly process-local. They are not durable authority.
+
+Current incident statuses include:
+
+```text
+open
+recovering
+dependency_blocked
+approval_required
+human_required
+resolved
+```
+
+Current plan statuses include:
 
 ```text
 pending_approval
@@ -222,132 +322,65 @@ failed
 superseded
 ```
 
-`superseded` means the service recovered and was freshly verified before the pending plan executed. Supersession never invokes the plan action.
+Durable incident/plan/audit state, retention, migration, and restart recovery remain promotion gates.
 
-## Human Approval Boundary
+## Demo Truthfulness
 
-The MCP control process creates `RecoveryApprovalSocketServer` only when `RECOVERY_APPROVAL_TOKEN` is configured. The Unix socket is created with mode `0600`. A stale path is removed only when it is a socket owned by the current control-host user; Recovery Agent refuses to remove a regular file or another user's socket.
+`recovery-agent demo` uses fake investigation/planning because external model-provider access is not available in the isolated build environment. It uses the real HTTP/control/recovery/watch/plan code path otherwise and remains visibly labeled:
 
-The human approval path is:
-
-```bash
-export RECOVERY_APPROVAL_TOKEN='separate-long-secret'
-recovery-agent approve <plan-id>
-recovery-agent reject <plan-id> 'reason'
+```text
+SIMULATED DEMONSTRATION
 ```
 
-`RecoveryApprovalSocketClient` sends the token only to the local Unix socket. The model-facing MCP catalog does not provide an approval operation and does not return the token.
+It does not auto-approve elevated plans.
 
-A valid approval:
+## Validation Evidence
 
-1. verifies the separate token;
-2. transitions the pending plan to approved;
-3. executes exactly one typed action against the already-bound node/service;
-4. performs a fresh service inspection;
-5. marks the plan `executed` only when health is restored;
-6. otherwise marks the plan failed and returns the incident to `human_required`.
+Previously validated branch foundation passed 30/30 delegate/E2E tests, strict TypeScript, production build, and package dry-run before the latest safety slices.
 
-This local socket + token mechanism is the E2E foundation, not the final production identity system. Production approver identity, attribution, expiry/revocation, durable audit, and richer host-native confirmation remain future work.
+Additional focused dependency-free harnesses now pass for:
 
-## Built-in Service Watches
+- rolling restart-window consumption, exhaustion, and expiry;
+- flapping-service prevention across recovery invocations;
+- dependency topology cycle rejection;
+- dependency-blocked zero-mutation behavior;
+- dependency-first sweep ordering;
+- approved-action dependency re-check;
+- partial-fleet inspection when one node throws `connection refused`;
+- continued recovery on reachable nodes while another node is offline.
 
-Each configured service receives a built-in watch by default. `watchEnabled` may disable it and `watchIntervalSeconds` controls its interval, defaulting to 30 seconds.
-
-`RecoveryWatchService` is a product lifecycle service, not a replacement generic scheduler. Due watches delegate to `RecoveryControlRuntime.recoverService`, preserving one recovery path for user-triggered and automatic execution.
-
-Watch invariants:
-
-- only one timer-driven watch cycle executes at a time;
-- an explicit `watch_run` waits for any active watch cycle before forcing all configured watches;
-- a watch that has not reached its interval is skipped;
-- a watch colliding with another recovery for the same target joins that in-flight operation;
-- a pending elevated plan suppresses additional automatic mutations on later watch cycles;
-- watch errors are recorded instead of terminating future cycles;
-- watch state is process-local and is not incident/audit authority.
-
-Current built-in coverage is service lifecycle health. Node resource pressure, deployment correlation, dependency health, certificate expiry, and recovery-readiness packs remain unimplemented.
-
-## Strands Boundary
-
-Recovery Agent has no direct `@strands-agents/sdk` dependency. It uses `IStrandsAgentRuntimeBootstrap` from `@tjxjnoobie/custom-strands-bridge`.
-
-The current E2E Strands layer has two focused roles:
-
-1. `StrandsRecoveryInvestigator` returns an evidence-based diagnosis.
-2. `StrandsRecoveryPlanner` may return one strict bounded proposal after investigation.
-3. Both close their bridge runtime in `finally`.
-4. Neither can execute a node mutation, select a target outside the incident, or approve a plan.
-
-`RECOVERY_AGENT_INVESTIGATION_MCP_URL` may add an investigation-only MCP server to the Strands runtime. No external investigation MCP is enabled by default.
-
-The larger planned Strands graph (triage router, specialist investigators, critic, postmortem, richer evidence collection) is not yet implemented and must not be presented as working behavior.
-
-## Incident and Plan State
-
-`InMemoryIncidentRepository` and `InMemoryRecoveryPlanRepository` currently own process-local incident and plan state. They are explicit runtime-only state and are not durable authority. Restarting the control process loses history and pending plans.
-
-Before production promotion, incident/plan/audit history requires a durable owning boundary with explicit retention, migration, cleanup, and recovery behavior. Recovery Agent must consume the appropriate owning persistence runtime instead of casually reinventing Tavall Database in TypeScript.
-
-`RecoveryOperationGate` is not durable state. It owns only promises for currently executing recovery operations and removes them on completion or failure.
-
-## Demo
-
-`recovery-agent demo` starts an ephemeral loopback node HTTP server and drives the same control gateway, policy resolver, orchestrator, operation gate, watch service, incident repository, planner path, and MCP router used by the real runtime.
-
-The demo uses fake investigation/planning because model-provider access is external. It does not auto-approve the pending elevated plan. Output is labeled `SIMULATED DEMONSTRATION` and must remain distinguishable from physical product/model evidence.
-
-## Implemented Validation
-
-The current local E2E harness covers:
-
-- stopped service -> typed restart -> fresh verification -> incident resolved;
-- repeatedly failing service -> bounded restart budget -> investigation -> strict typed proposal -> pending approval;
-- repeated recovery while a plan is pending -> no extra restart, incident, or plan;
-- external recovery before approval -> pending plan superseded without execution and incident resolved;
-- concurrent recovery for the same target -> one shared in-flight operation;
-- different service targets -> independent concurrent recovery operations;
-- real local HTTP boundary between control gateway and demo node runtime;
-- bearer authentication on the node boundary;
-- recurring service watch due/skip behavior and forced execution;
-- planner target/command injection rejection and non-JSON rejection;
-- Strands runtime cleanup on success and malformed output;
-- model-facing MCP has no approval/rejection execution operation;
-- owner-only Unix approval socket mode `0600`;
-- wrong approval token -> no service mutation;
-- valid local approval -> one typed restart -> fresh verification -> executed/failed plan state;
-- systemd public service ID -> fixed unit mapping with no shell-input surface.
+Additional repository tests were added for human-required suppression, rolling budgets, dependency recovery, dependency-safe approval, and fleet isolation. A full post-slice `npm run check` is not claimed because this execution environment cannot resolve external npm dependencies.
 
 ## Remaining Promotion Gates
 
-This document remains `FINAL_DRAFT`. The following are not yet claimed:
+This document remains `FINAL_DRAFT`. Not yet claimed:
 
-- real `npm install` and generated dependency lockfile in a networked development environment;
+- real networked `npm install` and generated lockfile;
 - physical `@modelcontextprotocol/server@2.0.0` validation with MCP Inspector/current host;
-- physical `@strands-agents/sdk@1.16.0` validation inherited from the bridge;
-- authorized real model invocation through the bridge;
-- clean-directory package/npx install-and-run smoke test;
-- durable incident/plan/audit persistence;
-- built-in node/deployment/dependency/certificate/recovery-readiness watch packs and semantic user-watch compilation;
+- physical Strands SDK/runtime validation through the shared bridge;
+- authorized real-model investigation/planning;
+- clean-directory `npx` package smoke test;
+- durable incidents/plans/audit/restart-budget authority;
+- node resource-pressure, deployment, certificate, and recovery-readiness watch packs;
+- semantic user-watch compilation;
 - full Strands triage/specialist/critic/postmortem graph;
-- production identity-aware approval with attribution, expiry/revocation, durable audit, and richer host-native confirmation;
-- outbound node enrollment, credential rotation, mutual authentication, and production remote transport;
+- production identity-aware approvals with approver attribution, expiry/revocation, durable audit, and richer host-native confirmation;
+- outbound node enrollment, mTLS, credential rotation, and public production transport;
 - Docker/Kubernetes/network/database/Minecraft adapters;
-- recovery budgets/actions beyond bounded systemd restart, including rolling/time-window budgets, rollback/failover/drain/quarantine/reboot policy;
-- production demo evidence showing real action -> execution -> result/state change on an authorized disposable service.
+- typed recovery actions beyond systemd restart, including rollback/failover/drain/quarantine/reboot;
+- physical demo evidence showing action -> execution -> resulting state on an authorized disposable service.
 
-## Final Rules Summary
+## Final Invariants
 
 - AI does not run on production nodes.
-- Deterministic software owns checks, authorization, mutation, budgets, target binding, approval verification, and post-action verification.
-- Strands is an investigation/planning runtime, never the authorization boundary.
+- Deterministic code owns health decisions, dependencies, ordering, authorization, automatic budgets, mutation, approval verification, and fresh verification.
+- One unreachable node does not erase the reachable fleet.
+- A dependency failure does not trigger blind downstream restarts.
+- A flapping service does not receive an infinite fresh restart budget.
+- Same-target concurrent recovery is coalesced.
+- Pending approval and human escalation stop automatic retries.
 - Model plans cannot choose targets.
-- Model-facing MCP cannot approve or reject elevated plans.
-- Node operations are typed and configured; arbitrary shell execution is not a normal capability.
-- Every mutation is followed by fresh deterministic verification.
-- Concurrent recovery for the same node/service is coalesced into one operation.
-- A pending elevated plan suppresses additional automatic recovery until a human decides it or verified external recovery supersedes it.
-- Built-in service watches reuse the same bounded recovery path as user-triggered recovery.
-- Elevated plans remain inert until approval arrives through the owner-only control-host socket and the separate token is verified.
-- Unknown or exhausted recovery paths escalate instead of looping indefinitely.
-- Demo behavior remains clearly labeled when simulated.
-- The system remains Draft until physical external/runtime evidence and accountable review are complete.
+- Model-facing MCP cannot approve elevated plans.
+- Arbitrary shell execution is not a normal capability.
+- Demo simulation remains explicitly labeled.
+- The product remains Draft until physical runtime evidence and accountable review are complete.
