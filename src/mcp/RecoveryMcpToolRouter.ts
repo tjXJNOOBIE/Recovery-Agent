@@ -1,5 +1,7 @@
+import type { IRecoveryDurabilityCheckpoint } from '../control/durability/RecoveryDurabilityCheckpointBarrier.js'
 import type { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
 import type { RecoveryWatchSurface } from '../control/watch/RecoveryWatchSurface.js'
+import type { RecoverySemanticWatchDefinition } from '../control/watch/semantic/RecoverySemanticWatch.js'
 import type { RecoverySemanticWatchService } from '../control/watch/semantic/RecoverySemanticWatchService.js'
 
 export interface McpToolDefinition { readonly name: string; readonly description: string; readonly inputSchema: Readonly<Record<string, unknown>> }
@@ -8,11 +10,18 @@ export class RecoveryMcpToolRouter {
   private readonly controlRuntime: RecoveryControlRuntime
   private readonly watchSurface: RecoveryWatchSurface
   private readonly semanticWatches: RecoverySemanticWatchService | undefined
+  private readonly durabilityCheckpoint: IRecoveryDurabilityCheckpoint | undefined
 
-  public constructor(controlRuntime: RecoveryControlRuntime, watchSurface: RecoveryWatchSurface, semanticWatches?: RecoverySemanticWatchService) {
+  public constructor(
+    controlRuntime: RecoveryControlRuntime,
+    watchSurface: RecoveryWatchSurface,
+    semanticWatches?: RecoverySemanticWatchService,
+    durabilityCheckpoint?: IRecoveryDurabilityCheckpoint,
+  ) {
     this.controlRuntime = controlRuntime
     this.watchSurface = watchSurface
     this.semanticWatches = semanticWatches
+    this.durabilityCheckpoint = durabilityCheckpoint
   }
 
   public listTools(): readonly McpToolDefinition[] {
@@ -46,15 +55,75 @@ export class RecoveryMcpToolRouter {
       case 'health_sweep': return this.controlRuntime.healthSweep()
       case 'watch_list': return this.listWatches()
       case 'watch_run': return this.watchSurface.runAllNow()
-      case 'watch_create': return this.requireSemanticWatches().create(this.requireString(args, 'request'))
-      case 'watch_update': return this.requireSemanticWatches().update(this.requireString(args, 'watchId'), this.requireString(args, 'request'))
-      case 'watch_remove': return this.requireSemanticWatches().remove(this.requireString(args, 'watchId'))
+      case 'watch_create': return this.createSemanticWatch(this.requireString(args, 'request'))
+      case 'watch_update': return this.updateSemanticWatch(this.requireString(args, 'watchId'), this.requireString(args, 'request'))
+      case 'watch_remove': return this.removeSemanticWatch(this.requireString(args, 'watchId'))
       case 'incident_list': return this.controlRuntime.listIncidents()
       case 'incident_inspect': return this.controlRuntime.inspectIncident(this.requireString(args, 'incidentId'))
       case 'incident_postmortem': return this.controlRuntime.generateIncidentPostmortem(this.requireString(args, 'incidentId'))
       case 'recovery_plan_list': return this.controlRuntime.listRecoveryPlans()
       case 'recovery_plan_inspect': return this.controlRuntime.inspectRecoveryPlan(this.requireString(args, 'planId'))
       default: throw new Error(`Unknown Recovery Agent MCP tool: ${name}`)
+    }
+  }
+
+  private async createSemanticWatch(request: string): Promise<RecoverySemanticWatchDefinition> {
+    const semanticWatches = this.requireSemanticWatches()
+    this.durabilityCheckpoint?.assertMutationAllowed()
+    const previous = [...semanticWatches.list()]
+    const created = await semanticWatches.create(request)
+    try {
+      await this.durabilityCheckpoint?.checkpoint({
+        actor: 'mcp-control-client',
+        action: 'semantic_watch_created',
+        summary: `Persisted semantic recovery watch ${created.watchId}`,
+        nodeId: created.nodeId,
+        serviceId: created.serviceId,
+      })
+      return created
+    } catch (error: unknown) {
+      semanticWatches.restore(previous)
+      throw error
+    }
+  }
+
+  private async updateSemanticWatch(watchId: string, request: string): Promise<RecoverySemanticWatchDefinition> {
+    const semanticWatches = this.requireSemanticWatches()
+    this.durabilityCheckpoint?.assertMutationAllowed()
+    const previous = [...semanticWatches.list()]
+    const updated = await semanticWatches.update(watchId, request)
+    try {
+      await this.durabilityCheckpoint?.checkpoint({
+        actor: 'mcp-control-client',
+        action: 'semantic_watch_updated',
+        summary: `Persisted semantic recovery watch update ${updated.watchId}`,
+        nodeId: updated.nodeId,
+        serviceId: updated.serviceId,
+      })
+      return updated
+    } catch (error: unknown) {
+      semanticWatches.restore(previous)
+      throw error
+    }
+  }
+
+  private async removeSemanticWatch(watchId: string): Promise<RecoverySemanticWatchDefinition> {
+    const semanticWatches = this.requireSemanticWatches()
+    this.durabilityCheckpoint?.assertMutationAllowed()
+    const previous = [...semanticWatches.list()]
+    const removed = semanticWatches.remove(watchId)
+    try {
+      await this.durabilityCheckpoint?.checkpoint({
+        actor: 'mcp-control-client',
+        action: 'semantic_watch_removed',
+        summary: `Persisted semantic recovery watch removal ${removed.watchId}`,
+        nodeId: removed.nodeId,
+        serviceId: removed.serviceId,
+      })
+      return removed
+    } catch (error: unknown) {
+      semanticWatches.restore(previous)
+      throw error
     }
   }
 

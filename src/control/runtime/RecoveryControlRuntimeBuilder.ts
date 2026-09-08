@@ -7,6 +7,7 @@ import { ApprovedRecoveryExecutor } from '../approval/ApprovedRecoveryExecutor.j
 import { RecoveryApprovalVerifier } from '../approval/RecoveryApprovalVerifier.js'
 import { RecoveryPlanApprovalHandler } from '../approval/RecoveryPlanApprovalHandler.js'
 import { RecoveryAutomaticRestartBudget } from '../budget/RecoveryAutomaticRestartBudget.js'
+import type { IRecoveryDurabilityCheckpoint } from '../durability/RecoveryDurabilityCheckpointBarrier.js'
 import { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import { StrandsRecoveryInvestigator } from '../investigation/StrandsRecoveryInvestigator.js'
 import { RecoveryPolicyResolver } from '../policy/RecoveryPolicyResolver.js'
@@ -27,10 +28,16 @@ import { RecoveryControlRuntime } from './RecoveryControlRuntime.js'
 export class RecoveryControlRuntimeBuilder {
   private readonly bootstrap: IStrandsAgentRuntimeBootstrap
   private readonly environment: RecoveryAgentEnvironment
+  private readonly durabilityCheckpoint: IRecoveryDurabilityCheckpoint | undefined
 
-  public constructor(bootstrap: IStrandsAgentRuntimeBootstrap, environment: RecoveryAgentEnvironment = process.env) {
+  public constructor(
+    bootstrap: IStrandsAgentRuntimeBootstrap,
+    environment: RecoveryAgentEnvironment = process.env,
+    durabilityCheckpoint?: IRecoveryDurabilityCheckpoint,
+  ) {
     this.bootstrap = bootstrap
     this.environment = environment
+    this.durabilityCheckpoint = durabilityCheckpoint
   }
 
   public build(config: RecoveryControlConfig): RecoveryControlRuntime {
@@ -61,12 +68,14 @@ export class RecoveryControlRuntimeBuilder {
       incidentState,
       escalationHandler,
       restartBudget,
+      this.durabilityCheckpoint,
     )
     const approvalHandler = new RecoveryPlanApprovalHandler(
       planState,
       incidentState,
       new RecoveryApprovalVerifier(this.environment['RECOVERY_APPROVAL_TOKEN']),
       new ApprovedRecoveryExecutor(gateways, policies),
+      this.durabilityCheckpoint,
     )
     const postmortem = new StrandsRecoveryPostmortem(
       this.bootstrap,
@@ -82,6 +91,7 @@ export class RecoveryControlRuntimeBuilder {
       new RecoveryOperationGate(),
       undefined,
       postmortem,
+      this.durabilityCheckpoint,
     )
   }
 

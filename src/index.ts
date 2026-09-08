@@ -67,6 +67,8 @@ export { RecoveryApprovalSocketClient } from './control/approval/socket/Recovery
 export { RecoveryApprovalSocketPathResolver } from './control/approval/socket/RecoveryApprovalSocketPathResolver.js'
 export { RecoveryApprovalSocketServer } from './control/approval/socket/RecoveryApprovalSocketServer.js'
 export type { IRecoveryStateAuthority, RecoveryDurableAuditEntry, RecoveryDurableRestartAttempt, RecoveryDurableSnapshot, RecoveryDurableStateResult } from './control/durability/RecoveryDurableState.js'
+export { RecoveryDurabilityCheckpointBarrier } from './control/durability/RecoveryDurabilityCheckpointBarrier.js'
+export type { IRecoveryDurabilityCheckpoint } from './control/durability/RecoveryDurabilityCheckpointBarrier.js'
 export { RecoveryDurableStateCoordinator } from './control/durability/RecoveryDurableStateCoordinator.js'
 export type { RecoveryDurableAuditRequest, RecoveryDurableClock, RecoveryDurableControlSurface, RecoveryDurableSemanticWatchSurface } from './control/durability/RecoveryDurableStateCoordinator.js'
 export { RecoveryDurableStateParser, RecoveryStateAuthorityError, RecoveryStateStaleRevisionError } from './control/durability/RecoveryDurableStateParser.js'

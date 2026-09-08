@@ -3,6 +3,7 @@ import type { NodeSnapshot, ServiceSnapshot } from '../../node/data/ServiceSnaps
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
 import type { RecoveryPlanApprovalResult } from '../approval/RecoveryPlanApprovalHandler.js'
 import type { RecoveryAutomaticRestartAttempt } from '../budget/RecoveryAutomaticRestartBudget.js'
+import type { IRecoveryDurabilityCheckpoint } from '../durability/RecoveryDurabilityCheckpointBarrier.js'
 import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
 import type { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
@@ -33,6 +34,7 @@ export class RecoveryControlRuntime {
   private readonly operationGate: RecoveryOperationGate
   private readonly readinessInspector: RecoveryReadinessInspector
   private readonly postmortemGenerator: IRecoveryPostmortemGenerator | undefined
+  private readonly durabilityCheckpoint: IRecoveryDurabilityCheckpoint | undefined
 
   public constructor(
     gateways: readonly INodeAgentGateway[],
@@ -43,6 +45,7 @@ export class RecoveryControlRuntime {
     operationGate: RecoveryOperationGate,
     readinessInspector?: RecoveryReadinessInspector,
     postmortemGenerator?: IRecoveryPostmortemGenerator,
+    durabilityCheckpoint?: IRecoveryDurabilityCheckpoint,
   ) {
     this.gateways = [...gateways]
     this.policies = [...policies]
@@ -58,6 +61,7 @@ export class RecoveryControlRuntime {
       this.planControl,
     )
     this.postmortemGenerator = postmortemGenerator
+    this.durabilityCheckpoint = durabilityCheckpoint
   }
 
   public restoreDurableState(state: RecoveryControlDurableState): void {
@@ -141,9 +145,22 @@ export class RecoveryControlRuntime {
   }
 
   public recoverService(nodeId: string, serviceId: string): Promise<RecoveryRunResult> {
+    this.durabilityCheckpoint?.assertMutationAllowed()
     const policy = this.requirePolicy(nodeId, serviceId)
     const gateway = this.requireGateway(nodeId)
-    return this.operationGate.run(nodeId, serviceId, () => this.recoverOrRespectSuppression(gateway, policy))
+    return this.operationGate.run(nodeId, serviceId, async () => {
+      const result = await this.recoverOrRespectSuppression(gateway, policy)
+      if (this.shouldCheckpoint(result)) {
+        await this.durabilityCheckpoint?.checkpoint({
+          actor: 'recovery-agent',
+          action: 'recovery_state_verified',
+          summary: `Recovery operation finished with status ${result.status}; restartAttempts=${result.restartAttempts}`,
+          nodeId,
+          serviceId,
+        })
+      }
+      return result
+    })
   }
 
   public async healthSweep(): Promise<readonly RecoveryRunResult[]> {
@@ -180,10 +197,12 @@ export class RecoveryControlRuntime {
   }
 
   public approveRecoveryPlan(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
+    this.durabilityCheckpoint?.assertMutationAllowed()
     return this.planControl.approve(planId, approvalToken)
   }
 
-  public rejectRecoveryPlan(planId: string, approvalToken: string, reason: string): RecoveryPlan {
+  public rejectRecoveryPlan(planId: string, approvalToken: string, reason: string): Promise<RecoveryPlan> {
+    this.durabilityCheckpoint?.assertMutationAllowed()
     return this.planControl.reject(planId, approvalToken, reason)
   }
 
@@ -286,6 +305,10 @@ export class RecoveryControlRuntime {
       )
     }
     return this.recoveryOrchestrator.recover(gateway, policy)
+  }
+
+  private shouldCheckpoint(result: RecoveryRunResult): boolean {
+    return result.restartAttempts > 0 || result.incident !== undefined || result.recoveryPlan !== undefined
   }
 
   private async inspectUnhealthyDependencies(policy: ServiceRecoveryPolicy): Promise<readonly ServiceSnapshot[]> {

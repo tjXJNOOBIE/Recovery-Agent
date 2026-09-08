@@ -81,7 +81,7 @@ export class RecoveryApprovalSocketServer {
       if (typeof reason !== 'string' || reason.trim().length === 0) {
         throw new Error('Recovery plan rejection reason must be non-blank')
       }
-      const result = this.controlRuntime.rejectRecoveryPlan(planId, approvalToken, reason)
+      const result = await this.controlRuntime.rejectRecoveryPlan(planId, approvalToken, reason)
       this.json(response, 200, result)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)

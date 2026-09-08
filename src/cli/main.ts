@@ -9,6 +9,9 @@ import { RecoveryNodeConfigReader } from '../config/RecoveryNodeConfig.js'
 import { RecoveryApprovalSocketClient } from '../control/approval/socket/RecoveryApprovalSocketClient.js'
 import { RecoveryApprovalSocketPathResolver } from '../control/approval/socket/RecoveryApprovalSocketPathResolver.js'
 import { RecoveryApprovalSocketServer } from '../control/approval/socket/RecoveryApprovalSocketServer.js'
+import { RecoveryDurabilityCheckpointBarrier } from '../control/durability/RecoveryDurabilityCheckpointBarrier.js'
+import { RecoveryDurableStateCoordinator } from '../control/durability/RecoveryDurableStateCoordinator.js'
+import { RecoveryStateAuthorityProcessClient } from '../control/durability/RecoveryStateAuthorityProcessClient.js'
 import { RecoveryControlRuntimeBuilder } from '../control/runtime/RecoveryControlRuntimeBuilder.js'
 import { RecoveryWatchCoordinator } from '../control/watch/RecoveryWatchCoordinator.js'
 import { RecoveryWatchDefinitionBuilder } from '../control/watch/RecoveryWatchDefinitionBuilder.js'
@@ -47,6 +50,11 @@ function requireApprovalToken(): string {
   const token = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
   if (token === undefined || token.length < 16) throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters')
   return token
+}
+
+function optionalEnvironment(name: string): string | undefined {
+  const value = process.env[name]?.trim()
+  return value === undefined || value.length === 0 ? undefined : value
 }
 
 async function main(): Promise<void> {
@@ -96,7 +104,8 @@ async function main(): Promise<void> {
   if (command === 'mcp') {
     const config = new RecoveryControlConfigReader().read(requireArgument(args, 1, 'control config path'))
     const bootstrap = new StrandsAgentRuntimeBootstrap()
-    const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env).build(config)
+    const durabilityBarrier = new RecoveryDurabilityCheckpointBarrier()
+    const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env, durabilityBarrier).build(config)
     const serviceWatches = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
     const nodeWatches = new RecoveryNodeWatchService(control, new RecoveryNodeWatchDefinitionBuilder().build(config))
     const readinessWatch = new RecoveryReadinessWatchService(control)
@@ -121,8 +130,38 @@ async function main(): Promise<void> {
       semanticTargets,
       semanticParser,
     )
-    const semanticWatches = new RecoverySemanticWatchService(semanticCompiler, serviceWatches)
-    const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watches, semanticWatches))
+    const semanticWatches = new RecoverySemanticWatchService(
+      semanticCompiler,
+      serviceWatches,
+      semanticTargets,
+    )
+
+    let durability: RecoveryDurableStateCoordinator | undefined
+    const authorityCommand = optionalEnvironment('RECOVERY_STATE_AUTHORITY_COMMAND')
+    if (authorityCommand !== undefined) {
+      const authority = await RecoveryStateAuthorityProcessClient.start({ command: authorityCommand })
+      durability = new RecoveryDurableStateCoordinator(authority, control, semanticWatches)
+      try {
+        const loaded = await durability.hydrate()
+        durabilityBarrier.bind(durability)
+        await durabilityBarrier.checkpoint({
+          actor: 'recovery-agent',
+          action: 'control_start',
+          summary: `Hydrated durable recovery state at revision ${loaded.revision} before exposing MCP, watches, or approval`,
+        })
+        process.stderr.write(`Recovery durable state authority hydrated revision ${loaded.revision}\n`)
+      } catch (error: unknown) {
+        const failures: unknown[] = [error]
+        try { await durability.close() } catch (closeError: unknown) { failures.push(closeError) }
+        try { await control.close() } catch (closeError: unknown) { failures.push(closeError) }
+        if (failures.length > 1) throw new AggregateError(failures, 'Recovery durable startup failed and cleanup also failed', { cause: error })
+        throw error
+      }
+    }
+
+    const mcpServer = new RecoveryMcpServer(
+      new RecoveryMcpToolRouter(control, watches, semanticWatches, durabilityBarrier),
+    )
 
     const approvalToken = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
     const approvalServer = approvalToken === undefined || approvalToken.length === 0
@@ -144,6 +183,7 @@ async function main(): Promise<void> {
         void mcpServer.close()
           .then(() => watches.close())
           .then(() => approvalServer?.close())
+          .then(() => durability?.close())
           .then(() => control.close())
           .then(resolve, reject)
       }

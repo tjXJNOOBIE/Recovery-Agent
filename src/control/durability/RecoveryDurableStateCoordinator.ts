@@ -37,6 +37,7 @@ export class RecoveryDurableStateCoordinator {
   private revision = 0
   private audit: readonly RecoveryDurableAuditEntry[] = []
   private hydrated = false
+  private checkpointTail: Promise<void> = Promise.resolve()
 
   public constructor(
     authority: IRecoveryStateAuthority,
@@ -83,8 +84,22 @@ export class RecoveryDurableStateCoordinator {
     }
   }
 
-  public async checkpoint(auditRequest?: RecoveryDurableAuditRequest): Promise<RecoveryDurableStateResult> {
+  public checkpoint(auditRequest?: RecoveryDurableAuditRequest): Promise<RecoveryDurableStateResult> {
     this.requireHydrated()
+    const run = this.checkpointTail.then(
+      () => this.performCheckpoint(auditRequest),
+      () => this.performCheckpoint(auditRequest),
+    )
+    this.checkpointTail = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  public async close(): Promise<void> {
+    await this.checkpointTail
+    await this.authority.close()
+  }
+
+  private async performCheckpoint(auditRequest?: RecoveryDurableAuditRequest): Promise<RecoveryDurableStateResult> {
     const candidateAudit = auditRequest === undefined
       ? this.audit
       : [...this.audit, this.createAuditEntry(auditRequest)]
@@ -101,10 +116,6 @@ export class RecoveryDurableStateCoordinator {
     this.revision = committed.revision
     this.audit = committed.snapshot.audit.map((entry) => ({ ...entry }))
     return { revision: this.revision, snapshot: this.currentSnapshot() }
-  }
-
-  public close(): Promise<void> {
-    return this.authority.close()
   }
 
   private createAuditEntry(request: RecoveryDurableAuditRequest): RecoveryDurableAuditEntry {

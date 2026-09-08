@@ -35,7 +35,7 @@ export class RecoveryPlanControl {
     return this.approvalHandler.approveAndExecute(planId, approvalToken)
   }
 
-  public reject(planId: string, approvalToken: string, reason: string): RecoveryPlan {
+  public reject(planId: string, approvalToken: string, reason: string): Promise<RecoveryPlan> {
     return this.approvalHandler.reject(planId, approvalToken, reason)
   }
 }

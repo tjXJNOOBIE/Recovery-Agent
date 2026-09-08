@@ -4,6 +4,7 @@ import type {
   RecoveryAutomaticRestartBudget,
   RecoveryAutomaticRestartBudgetSnapshot,
 } from '../budget/RecoveryAutomaticRestartBudget.js'
+import type { IRecoveryDurabilityCheckpoint } from '../durability/RecoveryDurabilityCheckpointBarrier.js'
 import type { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { RecoveryPolicyResolver } from '../policy/RecoveryPolicyResolver.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
@@ -15,17 +16,20 @@ export class RecoveryOrchestrator {
   private readonly incidentState: RecoveryIncidentRuntimeState
   private readonly escalationHandler: RecoveryEscalationHandler
   private readonly restartBudget: RecoveryAutomaticRestartBudget
+  private readonly durabilityCheckpoint: IRecoveryDurabilityCheckpoint | undefined
 
   public constructor(
     policyResolver: RecoveryPolicyResolver,
     incidentState: RecoveryIncidentRuntimeState,
     escalationHandler: RecoveryEscalationHandler,
     restartBudget: RecoveryAutomaticRestartBudget,
+    durabilityCheckpoint?: IRecoveryDurabilityCheckpoint,
   ) {
     this.policyResolver = policyResolver
     this.incidentState = incidentState
     this.escalationHandler = escalationHandler
     this.restartBudget = restartBudget
+    this.durabilityCheckpoint = durabilityCheckpoint
   }
 
   public inspectAutomaticRestartBudget(policy: ServiceRecoveryPolicy): RecoveryAutomaticRestartBudgetSnapshot {
@@ -47,6 +51,7 @@ export class RecoveryOrchestrator {
       return { status: 'healthy', snapshot: initialSnapshot, restartAttempts: 0 }
     }
 
+    this.durabilityCheckpoint?.assertMutationAllowed()
     let incident = this.incidentState.open(
       gateway.nodeId,
       policy.serviceId,
@@ -83,6 +88,14 @@ export class RecoveryOrchestrator {
           `Restart attempt ${restartAttempts} requested; automatic rolling budget ${budget.usedAttempts}/${budget.maximumAttempts} in ${budget.windowMs}ms`,
           'recovering',
         )
+        await this.durabilityCheckpoint?.checkpoint({
+          actor: 'recovery-agent',
+          action: 'automatic_restart_intent',
+          summary: `Persisted automatic restart attempt ${restartAttempts} before executing the node mutation`,
+          nodeId: policy.nodeId,
+          serviceId: policy.serviceId,
+        })
+
         const actionResult = await gateway.restartService(policy.serviceId)
         currentSnapshot = await gateway.inspectService(policy.serviceId)
         incident = this.incidentState.append(

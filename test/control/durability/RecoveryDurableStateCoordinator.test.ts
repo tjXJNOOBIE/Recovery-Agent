@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { RecoveryAutomaticRestartBudget } from '../../../src/control/budget/RecoveryAutomaticRestartBudget.js'
+import { RecoveryDurabilityCheckpointBarrier } from '../../../src/control/durability/RecoveryDurabilityCheckpointBarrier.js'
 import type {
   IRecoveryStateAuthority,
   RecoveryDurableSnapshot,
@@ -104,6 +105,7 @@ class FakeAuthority implements IRecoveryStateAuthority {
   public commitCalls = 0
   public closeCalls = 0
   public staleActualRevision: number | undefined
+  public readonly expectedRevisions: number[] = []
 
   public constructor(initialRevision: number, initialSnapshot: RecoveryDurableSnapshot) {
     this.revision = initialRevision
@@ -118,6 +120,7 @@ class FakeAuthority implements IRecoveryStateAuthority {
 
   public async commit(expectedRevision: number, next: RecoveryDurableSnapshot): Promise<RecoveryDurableStateResult> {
     this.commitCalls += 1
+    this.expectedRevisions.push(expectedRevision)
     if (this.staleActualRevision !== undefined) {
       throw new RecoveryStateStaleRevisionError('stale', expectedRevision, this.staleActualRevision)
     }
@@ -162,6 +165,28 @@ test('hydratesRuntimeStateAndCheckpointsMonotonicAudit', async () => {
   assert.equal(authority.closeCalls, 1)
 })
 
+test('serializesConcurrentCheckpointsAgainstOneLocalRevisionStream', async () => {
+  const authority = new FakeAuthority(7, snapshot)
+  const coordinator = new RecoveryDurableStateCoordinator(
+    authority,
+    new FakeControl(),
+    new FakeSemanticWatches(),
+    () => Date.parse('2026-09-08T21:00:00.000Z'),
+  )
+  await coordinator.hydrate()
+
+  const [first, second] = await Promise.all([
+    coordinator.checkpoint({ actor: 'test', action: 'first', summary: 'first concurrent checkpoint' }),
+    coordinator.checkpoint({ actor: 'test', action: 'second', summary: 'second concurrent checkpoint' }),
+  ])
+
+  assert.equal(first.revision, 8)
+  assert.equal(second.revision, 9)
+  assert.equal(coordinator.currentRevision(), 9)
+  assert.deepEqual(authority.expectedRevisions, [7, 8])
+  assert.deepEqual(coordinator.currentSnapshot().audit.slice(-2).map((entry) => entry.action), ['first', 'second'])
+})
+
 test('staleRevisionDoesNotAdvanceCoordinatorRevisionOrAudit', async () => {
   const authority = new FakeAuthority(3, snapshot)
   const coordinator = new RecoveryDurableStateCoordinator(
@@ -178,6 +203,30 @@ test('staleRevisionDoesNotAdvanceCoordinatorRevisionOrAudit', async () => {
   )
   assert.equal(coordinator.currentRevision(), 3)
   assert.equal(coordinator.currentSnapshot().audit.length, 1)
+})
+
+test('checkpointBarrierLatchesAuthorityFailureAndDisablesLaterMutation', async () => {
+  const authority = new FakeAuthority(3, snapshot)
+  const coordinator = new RecoveryDurableStateCoordinator(
+    authority,
+    new FakeControl(),
+    new FakeSemanticWatches(),
+  )
+  await coordinator.hydrate()
+  const barrier = new RecoveryDurabilityCheckpointBarrier()
+  barrier.bind(coordinator)
+  authority.staleActualRevision = 4
+
+  await assert.rejects(
+    barrier.checkpoint({ actor: 'test', action: 'stale', summary: 'latch mutation barrier' }),
+    /further mutations are disabled/,
+  )
+  assert.throws(() => barrier.assertMutationAllowed(), /further mutations are disabled/)
+  await assert.rejects(
+    barrier.checkpoint({ actor: 'test', action: 'retry', summary: 'must not retry automatically' }),
+    /further mutations are disabled/,
+  )
+  assert.equal(authority.commitCalls, 1)
 })
 
 test('runtimeStateOwnersRejectUnsafeRestoreShapes', () => {
