@@ -6,12 +6,23 @@
       "tokenEnvironmentVariable": "RECOVERY_NODE_TOKEN_EAST_01",
       "services": [
         {
+          "id": "postgres",
+          "restartAllowed": true,
+          "maxRestartAttempts": 1,
+          "restartBudgetWindowSeconds": 600,
+          "watchEnabled": true,
+          "watchIntervalSeconds": 30
+        },
+        {
           "id": "payments-api",
           "restartAllowed": true,
           "maxRestartAttempts": 2,
           "restartBudgetWindowSeconds": 600,
           "watchEnabled": true,
-          "watchIntervalSeconds": 30
+          "watchIntervalSeconds": 30,
+          "dependencies": [
+            { "serviceId": "postgres" }
+          ]
         }
       ]
     }

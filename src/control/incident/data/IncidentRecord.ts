@@ -1,5 +1,5 @@
-export type IncidentStatus = 'open' | 'recovering' | 'approval_required' | 'resolved' | 'human_required'
-export type IncidentEventKind = 'detected' | 'action' | 'verification' | 'investigation' | 'plan_proposed' | 'approval' | 'plan_execution' | 'resolved' | 'escalated'
+export type IncidentStatus = 'open' | 'recovering' | 'dependency_blocked' | 'approval_required' | 'resolved' | 'human_required'
+export type IncidentEventKind = 'detected' | 'dependency' | 'action' | 'verification' | 'investigation' | 'plan_proposed' | 'approval' | 'plan_execution' | 'resolved' | 'escalated'
 
 export interface IncidentTimelineEntry {
   readonly at: string

@@ -38,6 +38,7 @@ export class RecoveryControlRuntimeBuilder {
       restartAllowed: service.restartAllowed,
       maxRestartAttempts: service.maxRestartAttempts,
       restartBudgetWindowMs: service.restartBudgetWindowSeconds * 1_000,
+      dependencies: service.dependencies,
     })))
     const incidentRepository = new InMemoryIncidentRepository()
     const planRepository = new InMemoryRecoveryPlanRepository()

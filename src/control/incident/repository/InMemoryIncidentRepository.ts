@@ -39,18 +39,11 @@ export class InMemoryIncidentRepository {
   }
 
   public findHumanRequired(nodeId: string, serviceId: string): IncidentRecord | undefined {
-    for (let index = this.incidents.length - 1; index >= 0; index -= 1) {
-      const incident = this.incidents[index]
-      if (
-        incident !== undefined
-        && incident.nodeId === nodeId
-        && incident.serviceId === serviceId
-        && incident.status === 'human_required'
-      ) {
-        return incident
-      }
-    }
-    return undefined
+    return this.findLatestByStatus(nodeId, serviceId, 'human_required')
+  }
+
+  public findDependencyBlocked(nodeId: string, serviceId: string): IncidentRecord | undefined {
+    return this.findLatestByStatus(nodeId, serviceId, 'dependency_blocked')
   }
 
   public require(id: string): IncidentRecord {
@@ -59,5 +52,20 @@ export class InMemoryIncidentRepository {
       throw new Error(`Unknown recovery incident: ${id}`)
     }
     return incident
+  }
+
+  private findLatestByStatus(nodeId: string, serviceId: string, status: IncidentStatus): IncidentRecord | undefined {
+    for (let index = this.incidents.length - 1; index >= 0; index -= 1) {
+      const incident = this.incidents[index]
+      if (
+        incident !== undefined
+        && incident.nodeId === nodeId
+        && incident.serviceId === serviceId
+        && incident.status === status
+      ) {
+        return incident
+      }
+    }
+    return undefined
   }
 }

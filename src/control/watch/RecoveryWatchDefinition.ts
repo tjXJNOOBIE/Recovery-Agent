@@ -4,7 +4,7 @@ export interface RecoveryWatchDefinition {
   readonly intervalMs: number
 }
 
-export type RecoveryWatchRunStatus = 'never_run' | 'healthy' | 'recovered' | 'approval_required' | 'escalated' | 'error'
+export type RecoveryWatchRunStatus = 'never_run' | 'healthy' | 'recovered' | 'blocked' | 'approval_required' | 'escalated' | 'error'
 
 export interface RecoveryWatchState {
   readonly nodeId: string
