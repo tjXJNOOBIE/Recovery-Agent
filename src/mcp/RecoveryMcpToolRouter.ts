@@ -1,20 +1,12 @@
 import type { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
 import type { RecoveryWatchSurface } from '../control/watch/RecoveryWatchSurface.js'
 
-export interface McpToolDefinition {
-  readonly name: string
-  readonly description: string
-  readonly inputSchema: Readonly<Record<string, unknown>>
-}
+export interface McpToolDefinition { readonly name: string; readonly description: string; readonly inputSchema: Readonly<Record<string, unknown>> }
 
 export class RecoveryMcpToolRouter {
   private readonly controlRuntime: RecoveryControlRuntime
   private readonly watchSurface: RecoveryWatchSurface
-
-  public constructor(controlRuntime: RecoveryControlRuntime, watchSurface: RecoveryWatchSurface) {
-    this.controlRuntime = controlRuntime
-    this.watchSurface = watchSurface
-  }
+  public constructor(controlRuntime: RecoveryControlRuntime, watchSurface: RecoveryWatchSurface) { this.controlRuntime = controlRuntime; this.watchSurface = watchSurface }
 
   public listTools(): readonly McpToolDefinition[] {
     return [
@@ -24,10 +16,11 @@ export class RecoveryMcpToolRouter {
       { name: 'service_inspect', description: 'Inspect one configured service.', inputSchema: this.nodeServiceSchema() },
       { name: 'service_recover', description: 'Run bounded policy-controlled recovery for one configured service.', inputSchema: this.nodeServiceSchema() },
       { name: 'health_sweep', description: 'Check reachable configured services and recover unhealthy services within policy.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-      { name: 'watch_list', description: 'List built-in service/node/readiness watches, node-health incidents, and latest runtime state.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-      { name: 'watch_run', description: 'Run built-in node, service, and readiness watches immediately through deterministic watch paths.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'watch_list', description: 'List built-in recovery watch state and incidents.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'watch_run', description: 'Run built-in deterministic watches immediately.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'incident_list', description: 'List recovery incidents from this control runtime.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'incident_inspect', description: 'Inspect one recovery incident and its timeline.', inputSchema: this.idSchema('incidentId') },
+      { name: 'incident_postmortem', description: 'Generate a structured evidence-bound postmortem for one resolved incident.', inputSchema: this.idSchema('incidentId') },
       { name: 'recovery_plan_list', description: 'List typed recovery plans proposed after bounded automatic recovery is exhausted.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'recovery_plan_inspect', description: 'Inspect one typed recovery plan and its approval status.', inputSchema: this.idSchema('planId') },
     ]
@@ -45,33 +38,14 @@ export class RecoveryMcpToolRouter {
       case 'watch_run': return this.watchSurface.runAllNow()
       case 'incident_list': return this.controlRuntime.listIncidents()
       case 'incident_inspect': return this.controlRuntime.inspectIncident(this.requireString(args, 'incidentId'))
+      case 'incident_postmortem': return this.controlRuntime.generateIncidentPostmortem(this.requireString(args, 'incidentId'))
       case 'recovery_plan_list': return this.controlRuntime.listRecoveryPlans()
       case 'recovery_plan_inspect': return this.controlRuntime.inspectRecoveryPlan(this.requireString(args, 'planId'))
       default: throw new Error(`Unknown Recovery Agent MCP tool: ${name}`)
     }
   }
 
-  private nodeServiceSchema(): Readonly<Record<string, unknown>> {
-    return {
-      type: 'object',
-      properties: { nodeId: { type: 'string' }, serviceId: { type: 'string' } },
-      required: ['nodeId', 'serviceId'],
-      additionalProperties: false,
-    }
-  }
-
-  private idSchema(key: string): Readonly<Record<string, unknown>> {
-    return {
-      type: 'object',
-      properties: { [key]: { type: 'string' } },
-      required: [key],
-      additionalProperties: false,
-    }
-  }
-
-  private requireString(args: Readonly<Record<string, unknown>>, key: string): string {
-    const value = args[key]
-    if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`MCP argument ${key} must be a non-blank string`)
-    return value.trim()
-  }
+  private nodeServiceSchema(): Readonly<Record<string, unknown>> { return { type: 'object', properties: { nodeId: { type: 'string' }, serviceId: { type: 'string' } }, required: ['nodeId', 'serviceId'], additionalProperties: false } }
+  private idSchema(key: string): Readonly<Record<string, unknown>> { return { type: 'object', properties: { [key]: { type: 'string' } }, required: [key], additionalProperties: false } }
+  private requireString(args: Readonly<Record<string, unknown>>, key: string): string { const value = args[key]; if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`MCP argument ${key} must be a non-blank string`); return value.trim() }
 }

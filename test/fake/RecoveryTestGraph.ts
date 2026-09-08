@@ -10,6 +10,7 @@ import type { IRecoveryPlanner } from '../../src/control/plan/IRecoveryPlanner.j
 import { InMemoryRecoveryPlanRepository } from '../../src/control/plan/InMemoryRecoveryPlanRepository.js'
 import { RecoveryEscalationHandler } from '../../src/control/plan/RecoveryEscalationHandler.js'
 import { RecoveryPlanControl } from '../../src/control/plan/RecoveryPlanControl.js'
+import type { IRecoveryPostmortemGenerator } from '../../src/control/postmortem/RecoveryPostmortem.js'
 import { RecoveryOperationGate } from '../../src/control/recovery/RecoveryOperationGate.js'
 import { RecoveryOrchestrator } from '../../src/control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../../src/control/runtime/RecoveryControlRuntime.js'
@@ -31,6 +32,7 @@ export function buildRecoveryTestGraph(
   planner: IRecoveryPlanner = new FakeRecoveryPlanner(),
   approvalToken = 'test-approval-token-1234',
   restartBudget: RecoveryAutomaticRestartBudget = new RecoveryAutomaticRestartBudget(),
+  postmortemGenerator?: IRecoveryPostmortemGenerator,
 ): RecoveryTestGraph {
   const incidents = new InMemoryIncidentRepository()
   const plans = new InMemoryRecoveryPlanRepository()
@@ -45,6 +47,6 @@ export function buildRecoveryTestGraph(
       new ApprovedRecoveryExecutor(gateways, policies),
     ),
   )
-  const control = new RecoveryControlRuntime(gateways, policies, orchestrator, incidents, planControl, new RecoveryOperationGate())
+  const control = new RecoveryControlRuntime(gateways, policies, orchestrator, incidents, planControl, new RecoveryOperationGate(), undefined, postmortemGenerator)
   return { incidents, plans, orchestrator, planControl, control }
 }
