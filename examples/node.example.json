@@ -1,0 +1,12 @@
+{
+  "nodeId": "production-east-01",
+  "listenHost": "127.0.0.1",
+  "listenPort": 7281,
+  "tokenEnvironmentVariable": "RECOVERY_NODE_TOKEN_EAST_01",
+  "services": [
+    {
+      "id": "payments-api",
+      "unit": "payments-api.service"
+    }
+  ]
+}

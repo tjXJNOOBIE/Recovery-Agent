@@ -13,33 +13,28 @@ export class RecoveryAgentRuntimeConfigBuilder {
 
   public build(): StrandsAgentRuntimeConfig {
     const modelId = this.optionalString(this.environment['RECOVERY_AGENT_MODEL_ID'])
-    const mcpUrl = this.optionalString(this.environment['RECOVERY_AGENT_MCP_URL']) ?? "http://127.0.0.1:7188/mcp"
+    const investigationMcpUrl = this.optionalString(this.environment['RECOVERY_AGENT_INVESTIGATION_MCP_URL'])
+    const authorization = this.optionalString(this.environment['RECOVERY_AGENT_INVESTIGATION_MCP_AUTHORIZATION'])
 
-    const authorization = this.optionalString(
-      this.environment['RECOVERY_AGENT_MCP_AUTHORIZATION'],
-    )
-
-    const runtimeConfig: StrandsAgentRuntimeConfig = {
+    return {
       agent: {
-        id: 'recovery-agent',
-        name: 'Recovery Agent',
+        id: 'recovery-agent-investigator',
+        name: 'Recovery Agent Investigator',
         systemPrompt: RECOVERY_AGENT_SYSTEM_PROMPT,
         printer: false,
         traceAttributes: {
           product: 'recovery-agent',
-          hackathonTrack: 'Professional',
+          responsibility: 'incident-investigation',
         },
         ...(modelId === undefined ? {} : { model: modelId }),
       },
-      ...(mcpUrl === undefined
+      ...(investigationMcpUrl === undefined
         ? {}
         : {
             mcpServers: {
-              product: {
-                url: mcpUrl,
-                ...(authorization === undefined
-                  ? {}
-                  : { headers: { Authorization: authorization } }),
+              investigation: {
+                url: investigationMcpUrl,
+                ...(authorization === undefined ? {} : { headers: { Authorization: authorization } }),
               },
             },
             mcpDefaults: {
@@ -48,8 +43,6 @@ export class RecoveryAgentRuntimeConfigBuilder {
             },
           }),
     }
-
-    return runtimeConfig
   }
 
   private optionalString(value: string | undefined): string | undefined {
@@ -58,7 +51,6 @@ export class RecoveryAgentRuntimeConfigBuilder {
     }
 
     const normalizedValue = value.trim()
-
     return normalizedValue.length === 0 ? undefined : normalizedValue
   }
 }
