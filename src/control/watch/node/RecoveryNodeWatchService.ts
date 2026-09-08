@@ -1,5 +1,5 @@
 import type { NodeSnapshot } from '../../../node/data/ServiceSnapshot.js'
-import { InMemoryNodeHealthIncidentRepository } from './InMemoryNodeHealthIncidentRepository.js'
+import { NodeHealthIncidentRuntimeState } from './NodeHealthIncidentRuntimeState.js'
 import { RecoveryNodeResourceEvaluator } from './RecoveryNodeResourceEvaluator.js'
 import {
   DEFAULT_RECOVERY_NODE_MAX_CLOCK_DRIFT_MS,
@@ -28,7 +28,7 @@ export interface RecoveryNodeWatchExecutionResult {
 export class RecoveryNodeWatchService {
   private readonly controlRuntime: RecoveryNodeInspectionRuntime
   private readonly evaluator: RecoveryNodeResourceEvaluator
-  private readonly incidentRepository: InMemoryNodeHealthIncidentRepository
+  private readonly incidentState: NodeHealthIncidentRuntimeState
   private readonly clock: RecoveryNodeWatchClock
   private states: readonly RecoveryNodeWatchRuntimeState[]
   private inFlight: Promise<readonly RecoveryNodeWatchExecutionResult[]> | undefined
@@ -37,12 +37,12 @@ export class RecoveryNodeWatchService {
     controlRuntime: RecoveryNodeInspectionRuntime,
     definitions: readonly RecoveryNodeWatchDefinition[],
     evaluator = new RecoveryNodeResourceEvaluator(),
-    incidentRepository = new InMemoryNodeHealthIncidentRepository(),
+    incidentState = new NodeHealthIncidentRuntimeState(),
     clock: RecoveryNodeWatchClock = Date.now,
   ) {
     this.controlRuntime = controlRuntime
     this.evaluator = evaluator
-    this.incidentRepository = incidentRepository
+    this.incidentState = incidentState
     this.clock = clock
     this.states = definitions.map((definition) => ({
       definition,
@@ -60,7 +60,7 @@ export class RecoveryNodeWatchService {
   }
 
   public listIncidents() {
-    return this.incidentRepository.list()
+    return this.incidentState.list()
   }
 
   public runDueWatches(nowMs = Date.now()): Promise<readonly RecoveryNodeWatchExecutionResult[]> {
@@ -131,7 +131,7 @@ export class RecoveryNodeWatchService {
       }
 
       if (snapshot.resources === undefined) {
-        const openIncident = this.incidentRepository.findOpen(definition.nodeId)
+        const openIncident = this.incidentState.findOpen(definition.nodeId)
         return {
           nodeId: definition.nodeId,
           intervalMs: definition.intervalMs,
@@ -148,15 +148,14 @@ export class RecoveryNodeWatchService {
         ...this.evaluator.evaluate(snapshot.resources, definition.thresholds),
       ]
       if (clockDriftMs !== undefined && clockDriftMs > maxClockDriftMs) {
-        violations.push({
-          metric: 'node_clock_drift_ms',
-          value: clockDriftMs,
-          threshold: maxClockDriftMs,
-        })
+        violations.push({ metric: 'node_clock_drift_ms', value: clockDriftMs, threshold: maxClockDriftMs })
       }
 
       if (violations.length === 0) {
-        this.incidentRepository.resolve(definition.nodeId, 'Node resource/filesystem/clock pressure cleared after fresh deterministic inspection')
+        this.incidentState.resolve(
+          definition.nodeId,
+          'Node resource/filesystem/clock pressure cleared after fresh deterministic inspection',
+        )
         return {
           nodeId: definition.nodeId,
           intervalMs: definition.intervalMs,
@@ -169,7 +168,7 @@ export class RecoveryNodeWatchService {
         }
       }
 
-      const incident = this.incidentRepository.openOrUpdate(
+      const incident = this.incidentState.openOrUpdate(
         definition.nodeId,
         violations,
         `Node pressure detected: ${violations.map((violation) => this.describeViolation(violation)).join(', ')}`,
@@ -187,7 +186,7 @@ export class RecoveryNodeWatchService {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
-      const incident = this.incidentRepository.openOrUpdate(
+      const incident = this.incidentState.openOrUpdate(
         definition.nodeId,
         [],
         `Node unreachable during deterministic watch: ${message}`,

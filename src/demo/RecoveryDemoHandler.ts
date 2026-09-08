@@ -2,15 +2,15 @@ import { ApprovedRecoveryExecutor } from '../control/approval/ApprovedRecoveryEx
 import { RecoveryApprovalVerifier } from '../control/approval/RecoveryApprovalVerifier.js'
 import { RecoveryPlanApprovalHandler } from '../control/approval/RecoveryPlanApprovalHandler.js'
 import { RecoveryAutomaticRestartBudget } from '../control/budget/RecoveryAutomaticRestartBudget.js'
-import { InMemoryIncidentRepository } from '../control/incident/repository/InMemoryIncidentRepository.js'
+import { RecoveryIncidentRuntimeState } from '../control/incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { IRecoveryInvestigator, RecoveryInvestigationRequest, RecoveryInvestigationResult } from '../control/investigation/IRecoveryInvestigator.js'
 import { RecoveryPolicyResolver } from '../control/policy/RecoveryPolicyResolver.js'
 import type { ServiceRecoveryPolicy } from '../control/policy/ServiceRecoveryPolicy.js'
 import type { IRecoveryPlanner, RecoveryPlanningRequest } from '../control/plan/IRecoveryPlanner.js'
-import { InMemoryRecoveryPlanRepository } from '../control/plan/InMemoryRecoveryPlanRepository.js'
 import { RecoveryEscalationHandler } from '../control/plan/RecoveryEscalationHandler.js'
 import { RecoveryPlanControl } from '../control/plan/RecoveryPlanControl.js'
 import type { RecoveryPlanProposal } from '../control/plan/RecoveryPlan.js'
+import { RecoveryPlanRuntimeState } from '../control/plan/runtime/RecoveryPlanRuntimeState.js'
 import { RecoveryOperationGate } from '../control/recovery/RecoveryOperationGate.js'
 import { RecoveryOrchestrator } from '../control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
@@ -78,18 +78,23 @@ export class RecoveryDemoHandler {
     const nodeServer = new NodeAgentHttpServer(nodeRuntime, token, { inspect: async () => DEMO_NODE_RESOURCES })
     const address = await nodeServer.listen()
     const gateway = new HttpNodeAgentGateway('demo-east', address.baseUrl, token)
-    const incidents = new InMemoryIncidentRepository()
-    const plans = new InMemoryRecoveryPlanRepository()
+    const incidentState = new RecoveryIncidentRuntimeState()
+    const planState = new RecoveryPlanRuntimeState()
     const policies: readonly ServiceRecoveryPolicy[] = [
       { nodeId: 'demo-east', serviceId: 'worker', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 2, restartBudgetWindowMs: 600_000 },
       { nodeId: 'demo-east', serviceId: 'payments', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 1, restartBudgetWindowMs: 600_000 },
     ]
-    const escalationHandler = new RecoveryEscalationHandler(incidents, new DemoRecoveryInvestigator(), new DemoRecoveryPlanner(), plans)
+    const escalationHandler = new RecoveryEscalationHandler(
+      incidentState,
+      new DemoRecoveryInvestigator(),
+      new DemoRecoveryPlanner(),
+      planState,
+    )
     const planControl = new RecoveryPlanControl(
-      plans,
+      planState,
       new RecoveryPlanApprovalHandler(
-        plans,
-        incidents,
+        planState,
+        incidentState,
         new RecoveryApprovalVerifier('demo-approval-token-0001'),
         new ApprovedRecoveryExecutor([gateway], policies),
       ),
@@ -97,8 +102,13 @@ export class RecoveryDemoHandler {
     const control = new RecoveryControlRuntime(
       [gateway],
       policies,
-      new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, escalationHandler, new RecoveryAutomaticRestartBudget()),
-      incidents,
+      new RecoveryOrchestrator(
+        new RecoveryPolicyResolver(),
+        incidentState,
+        escalationHandler,
+        new RecoveryAutomaticRestartBudget(),
+      ),
+      incidentState,
       planControl,
       new RecoveryOperationGate(),
     )

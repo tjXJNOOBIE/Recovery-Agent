@@ -1,30 +1,30 @@
 import type { RecoveryPlanApprovalHandler, RecoveryPlanApprovalResult } from '../approval/RecoveryPlanApprovalHandler.js'
-import type { InMemoryRecoveryPlanRepository } from './InMemoryRecoveryPlanRepository.js'
 import type { RecoveryPlan } from './RecoveryPlan.js'
+import type { RecoveryPlanRuntimeState } from './runtime/RecoveryPlanRuntimeState.js'
 
 export class RecoveryPlanControl {
-  private readonly repository: InMemoryRecoveryPlanRepository
+  private readonly planState: RecoveryPlanRuntimeState
   private readonly approvalHandler: RecoveryPlanApprovalHandler
 
-  public constructor(repository: InMemoryRecoveryPlanRepository, approvalHandler: RecoveryPlanApprovalHandler) {
-    this.repository = repository
+  public constructor(planState: RecoveryPlanRuntimeState, approvalHandler: RecoveryPlanApprovalHandler) {
+    this.planState = planState
     this.approvalHandler = approvalHandler
   }
 
   public list(): readonly RecoveryPlan[] {
-    return this.repository.list()
+    return this.planState.list()
   }
 
   public inspect(planId: string): RecoveryPlan {
-    return this.repository.require(planId)
+    return this.planState.require(planId)
   }
 
   public findPending(nodeId: string, serviceId: string): RecoveryPlan | undefined {
-    return this.repository.findPending(nodeId, serviceId)
+    return this.planState.findPending(nodeId, serviceId)
   }
 
   public supersede(planId: string, outcome: string): RecoveryPlan {
-    return this.repository.transition(planId, 'pending_approval', 'superseded', outcome)
+    return this.planState.transition(planId, 'pending_approval', 'superseded', outcome)
   }
 
   public approve(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {

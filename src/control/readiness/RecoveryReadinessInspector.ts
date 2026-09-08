@@ -1,5 +1,5 @@
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
-import type { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
+import type { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
 import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
 import type { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
@@ -13,20 +13,20 @@ export class RecoveryReadinessInspector {
   private readonly gateways: readonly INodeAgentGateway[]
   private readonly policies: readonly ServiceRecoveryPolicy[]
   private readonly recoveryOrchestrator: RecoveryOrchestrator
-  private readonly incidentRepository: InMemoryIncidentRepository
+  private readonly incidentState: RecoveryIncidentRuntimeState
   private readonly planControl: RecoveryPlanControl
 
   public constructor(
     gateways: readonly INodeAgentGateway[],
     policies: readonly ServiceRecoveryPolicy[],
     recoveryOrchestrator: RecoveryOrchestrator,
-    incidentRepository: InMemoryIncidentRepository,
+    incidentState: RecoveryIncidentRuntimeState,
     planControl: RecoveryPlanControl,
   ) {
     this.gateways = [...gateways]
     this.policies = [...policies]
     this.recoveryOrchestrator = recoveryOrchestrator
-    this.incidentRepository = incidentRepository
+    this.incidentState = incidentState
     this.planControl = planControl
   }
 
@@ -46,8 +46,8 @@ export class RecoveryReadinessInspector {
   private async inspectService(policy: ServiceRecoveryPolicy, observedAt: string): Promise<RecoveryServiceReadiness> {
     const automaticBudget = this.recoveryOrchestrator.inspectAutomaticRestartBudget(policy)
     const pendingPlan = this.planControl.findPending(policy.nodeId, policy.serviceId)
-    const humanIncident = this.incidentRepository.findHumanRequired(policy.nodeId, policy.serviceId)
-    const dependencyBlockedIncident = this.incidentRepository.findDependencyBlocked(policy.nodeId, policy.serviceId)
+    const humanIncident = this.incidentState.findHumanRequired(policy.nodeId, policy.serviceId)
+    const dependencyBlockedIncident = this.incidentState.findDependencyBlocked(policy.nodeId, policy.serviceId)
     const dependencies = await Promise.all((policy.dependencies ?? []).map((dependency) => this.inspectDependency(dependency.nodeId, dependency.serviceId)))
 
     let targetHealthy: boolean | undefined

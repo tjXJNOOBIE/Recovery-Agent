@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { NodeHealthIncident } from './NodeHealthIncident.js'
 import type { RecoveryNodeResourceViolation } from './RecoveryNodeWatchDefinition.js'
 
-export class InMemoryNodeHealthIncidentRepository {
+export class NodeHealthIncidentRuntimeState {
   private incidents: NodeHealthIncident[] = []
 
   public list(): readonly NodeHealthIncident[] {

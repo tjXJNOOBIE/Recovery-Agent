@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { RecoveryPlan, RecoveryPlanStatus } from './RecoveryPlan.js'
+import type { RecoveryPlan, RecoveryPlanStatus } from '../RecoveryPlan.js'
 
 export interface CreateRecoveryPlanRequest {
   readonly incidentId: string
@@ -9,7 +9,7 @@ export interface CreateRecoveryPlanRequest {
   readonly rationale: string
 }
 
-export class InMemoryRecoveryPlanRepository {
+export class RecoveryPlanRuntimeState {
   private plans: RecoveryPlan[] = []
 
   public create(request: CreateRecoveryPlanRequest): RecoveryPlan {

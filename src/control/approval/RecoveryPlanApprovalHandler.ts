@@ -1,8 +1,8 @@
 import type { ServiceSnapshot } from '../../node/data/ServiceSnapshot.js'
 import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
-import type { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
-import type { InMemoryRecoveryPlanRepository } from '../plan/InMemoryRecoveryPlanRepository.js'
+import type { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
+import type { RecoveryPlanRuntimeState } from '../plan/runtime/RecoveryPlanRuntimeState.js'
 import type { ApprovedRecoveryExecutor } from './ApprovedRecoveryExecutor.js'
 import type { RecoveryApprovalVerifier } from './RecoveryApprovalVerifier.js'
 
@@ -14,27 +14,27 @@ export interface RecoveryPlanApprovalResult {
 }
 
 export class RecoveryPlanApprovalHandler {
-  private readonly planRepository: InMemoryRecoveryPlanRepository
-  private readonly incidentRepository: InMemoryIncidentRepository
+  private readonly planState: RecoveryPlanRuntimeState
+  private readonly incidentState: RecoveryIncidentRuntimeState
   private readonly approvalVerifier: RecoveryApprovalVerifier
   private readonly executor: ApprovedRecoveryExecutor
 
   public constructor(
-    planRepository: InMemoryRecoveryPlanRepository,
-    incidentRepository: InMemoryIncidentRepository,
+    planState: RecoveryPlanRuntimeState,
+    incidentState: RecoveryIncidentRuntimeState,
     approvalVerifier: RecoveryApprovalVerifier,
     executor: ApprovedRecoveryExecutor,
   ) {
-    this.planRepository = planRepository
-    this.incidentRepository = incidentRepository
+    this.planState = planState
+    this.incidentState = incidentState
     this.approvalVerifier = approvalVerifier
     this.executor = executor
   }
 
   public async approveAndExecute(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
     this.approvalVerifier.verify(approvalToken)
-    let plan = this.planRepository.transition(planId, 'pending_approval', 'approved')
-    let incident = this.incidentRepository.append(
+    let plan = this.planState.transition(planId, 'pending_approval', 'approved')
+    let incident = this.incidentState.append(
       plan.incidentId,
       'approval',
       `Recovery plan ${plan.id} received explicit out-of-band approval`,
@@ -43,23 +43,23 @@ export class RecoveryPlanApprovalHandler {
 
     try {
       const execution = await this.executor.execute(plan)
-      incident = this.incidentRepository.append(
+      incident = this.incidentState.append(
         incident.id,
         'plan_execution',
         `Approved restart accepted=${execution.accepted}; verified ${execution.snapshot.lifecycleState}; healthy=${execution.snapshot.healthy}`,
         'recovering',
       )
       if (execution.restoredHealth) {
-        plan = this.planRepository.transition(plan.id, 'approved', 'executed', 'Approved restart restored service health')
-        incident = this.incidentRepository.append(
+        plan = this.planState.transition(plan.id, 'approved', 'executed', 'Approved restart restored service health')
+        incident = this.incidentState.append(
           incident.id,
           'resolved',
           'Explicitly approved recovery plan restored service health',
           'resolved',
         )
       } else {
-        plan = this.planRepository.transition(plan.id, 'approved', 'failed', 'Approved restart did not restore service health')
-        incident = this.incidentRepository.append(
+        plan = this.planState.transition(plan.id, 'approved', 'failed', 'Approved restart did not restore service health')
+        incident = this.incidentState.append(
           incident.id,
           'escalated',
           'Approved recovery plan executed but service remains unhealthy',
@@ -69,8 +69,8 @@ export class RecoveryPlanApprovalHandler {
       return { plan, incident, snapshot: execution.snapshot, restoredHealth: execution.restoredHealth }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
-      plan = this.planRepository.transition(plan.id, 'approved', 'failed', `Approved action failed: ${message}`)
-      this.incidentRepository.append(
+      plan = this.planState.transition(plan.id, 'approved', 'failed', `Approved action failed: ${message}`)
+      this.incidentState.append(
         incident.id,
         'escalated',
         `Approved recovery execution failed: ${message}`,
@@ -86,8 +86,8 @@ export class RecoveryPlanApprovalHandler {
     if (normalizedReason.length === 0) {
       throw new Error('Recovery plan rejection reason must be non-blank')
     }
-    const plan = this.planRepository.transition(planId, 'pending_approval', 'rejected', normalizedReason)
-    this.incidentRepository.append(
+    const plan = this.planState.transition(planId, 'pending_approval', 'rejected', normalizedReason)
+    this.incidentState.append(
       plan.incidentId,
       'approval',
       `Recovery plan ${plan.id} was explicitly rejected: ${normalizedReason}`,

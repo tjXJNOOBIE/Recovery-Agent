@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { IncidentEventKind, IncidentRecord, IncidentStatus } from '../data/IncidentRecord.js'
 
-export class InMemoryIncidentRepository {
+export class RecoveryIncidentRuntimeState {
   private incidents: IncidentRecord[] = []
 
   public open(nodeId: string, serviceId: string, message: string): IncidentRecord {
