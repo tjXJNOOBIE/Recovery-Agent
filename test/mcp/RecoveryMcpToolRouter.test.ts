@@ -28,7 +28,8 @@ test('routesMcpRecoveryIntentIntoDeterministicControlRuntime', async () => {
     assert.equal(graph.control.listIncidents().length, 1)
     assert.ok(router.listTools().some((tool) => tool.name === 'health_sweep'))
     assert.ok(router.listTools().some((tool) => tool.name === 'watch_run'))
-    assert.ok(router.listTools().some((tool) => tool.name === 'recovery_plan_approve'))
+    assert.ok(router.listTools().some((tool) => tool.name === 'recovery_plan_inspect'))
+    assert.equal(router.listTools().some((tool) => tool.name === 'recovery_plan_approve'), false)
   } finally {
     await watches.close()
     await graph.control.close()
@@ -36,9 +37,8 @@ test('routesMcpRecoveryIntentIntoDeterministicControlRuntime', async () => {
   }
 })
 
-test('requiresOutOfBandApprovalTokenBeforeExecutingProposedRecoveryPlan', async () => {
+test('modelFacingMcpCannotApprovePendingRecoveryPlan', async () => {
   const token = 'test-token-1234567890'
-  const approvalToken = 'approval-token-1234567890'
   const server = new NodeAgentHttpServer(new DemoNodeServiceRuntime('node-a', [
     { id: 'payments', lifecycleState: 'failed', healthy: false, restartRestoresHealth: true },
   ]), token)
@@ -46,7 +46,7 @@ test('requiresOutOfBandApprovalTokenBeforeExecutingProposedRecoveryPlan', async 
   const gateway = new HttpNodeAgentGateway('node-a', address.baseUrl, token)
   const policy = { nodeId: 'node-a', serviceId: 'payments', expectedState: 'running' as const, restartAllowed: true, maxRestartAttempts: 0 }
   const planner = new FakeRecoveryPlanner({ action: 'restart_service', rationale: 'One human-approved restart is evidence-supported.' })
-  const graph = buildRecoveryTestGraph([gateway], [policy], new FakeRecoveryInvestigator(), planner, approvalToken)
+  const graph = buildRecoveryTestGraph([gateway], [policy], new FakeRecoveryInvestigator(), planner)
   const watches = new RecoveryWatchService(graph.control, [])
   const router = new RecoveryMcpToolRouter(graph.control, watches)
 
@@ -57,16 +57,12 @@ test('requiresOutOfBandApprovalTokenBeforeExecutingProposedRecoveryPlan', async 
     assert.ok(planId)
 
     await assert.rejects(
-      router.callTool('recovery_plan_approve', { planId, approvalToken: 'wrong-token-0000000' }),
-      /approval token is invalid/,
+      router.callTool('recovery_plan_approve', { planId, approvalToken: 'anything' }),
+      /Unknown Recovery Agent MCP tool/,
     )
 
-    const beforeApproval = await router.callTool('service_inspect', { nodeId: 'node-a', serviceId: 'payments' }) as {healthy: boolean}
-    assert.equal(beforeApproval.healthy, false)
-
-    const approved = await router.callTool('recovery_plan_approve', { planId, approvalToken }) as {restoredHealth: boolean; plan: {status: string}}
-    assert.equal(approved.restoredHealth, true)
-    assert.equal(approved.plan.status, 'executed')
+    const snapshot = await router.callTool('service_inspect', { nodeId: 'node-a', serviceId: 'payments' }) as {healthy: boolean}
+    assert.equal(snapshot.healthy, false)
   } finally {
     await watches.close()
     await graph.control.close()

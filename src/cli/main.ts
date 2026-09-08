@@ -6,6 +6,9 @@ import { StrandsAgentRuntimeBootstrap } from '@tjxjnoobie/custom-strands-bridge'
 import { RecoveryAgentRuntimeConfigBuilder } from '../agent/config/RecoveryAgentRuntimeConfigBuilder.js'
 import { RecoveryControlConfigReader } from '../config/RecoveryControlConfig.js'
 import { RecoveryNodeConfigReader } from '../config/RecoveryNodeConfig.js'
+import { RecoveryApprovalSocketClient } from '../control/approval/socket/RecoveryApprovalSocketClient.js'
+import { RecoveryApprovalSocketPathResolver } from '../control/approval/socket/RecoveryApprovalSocketPathResolver.js'
+import { RecoveryApprovalSocketServer } from '../control/approval/socket/RecoveryApprovalSocketServer.js'
 import { RecoveryControlRuntimeBuilder } from '../control/runtime/RecoveryControlRuntimeBuilder.js'
 import { RecoveryWatchDefinitionBuilder } from '../control/watch/RecoveryWatchDefinitionBuilder.js'
 import { RecoveryWatchService } from '../control/watch/RecoveryWatchService.js'
@@ -29,12 +32,33 @@ function requireArgument(args: readonly string[], index: number, label: string):
   return value
 }
 
+function requireApprovalToken(): string {
+  const token = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
+  if (token === undefined || token.length < 16) {
+    throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters')
+  }
+  return token
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0]
 
   if (command === 'demo') {
     const result = await new RecoveryDemoHandler().run()
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+    return
+  }
+
+  if (command === 'approve' || command === 'reject') {
+    const planId = requireArgument(args, 1, 'recovery plan ID')
+    const client = new RecoveryApprovalSocketClient(
+      new RecoveryApprovalSocketPathResolver().resolve(process.env),
+      requireApprovalToken(),
+    )
+    const result = command === 'approve'
+      ? await client.approve(planId)
+      : await client.reject(planId, args.slice(2).join(' '))
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
     return
   }
@@ -62,6 +86,15 @@ async function main(): Promise<void> {
     const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env).build(config)
     const watchService = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
     const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watchService))
+    const approvalToken = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
+    const approvalServer = approvalToken === undefined || approvalToken.length === 0
+      ? undefined
+      : new RecoveryApprovalSocketServer(control, new RecoveryApprovalSocketPathResolver().resolve(process.env))
+
+    if (approvalServer !== undefined) {
+      await approvalServer.listen()
+      process.stderr.write(`Recovery approval socket listening at ${new RecoveryApprovalSocketPathResolver().resolve(process.env)}\n`)
+    }
     watchService.start()
     mcpServer.serve()
 
@@ -72,6 +105,7 @@ async function main(): Promise<void> {
         closing = true
         void mcpServer.close()
           .then(() => watchService.close())
+          .then(() => approvalServer?.close())
           .then(() => control.close())
           .then(resolve, reject)
       }

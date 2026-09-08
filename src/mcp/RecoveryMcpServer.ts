@@ -15,15 +15,6 @@ const incidentInputSchema = z.object({
 const planInputSchema = z.object({
   planId: z.string().trim().min(1),
 }).strict()
-const planApprovalInputSchema = z.object({
-  planId: z.string().trim().min(1),
-  approvalToken: z.string().trim().min(1),
-}).strict()
-const planRejectionInputSchema = z.object({
-  planId: z.string().trim().min(1),
-  approvalToken: z.string().trim().min(1),
-  reason: z.string().trim().min(1),
-}).strict()
 
 export class RecoveryMcpServer {
   private readonly toolRouter: RecoveryMcpToolRouter
@@ -138,30 +129,6 @@ export class RecoveryMcpServer {
       },
       async ({ planId }) => this.toolResult(
         await this.toolRouter.callTool('recovery_plan_inspect', { planId }),
-      ),
-    )
-
-    server.registerTool(
-      'recovery_plan_approve',
-      {
-        description: 'Approve and execute one pending elevated recovery plan using an out-of-band approval token.',
-        inputSchema: planApprovalInputSchema,
-        annotations: { readOnlyHint: false, destructiveHint: true },
-      },
-      async ({ planId, approvalToken }) => this.toolResult(
-        await this.toolRouter.callTool('recovery_plan_approve', { planId, approvalToken }),
-      ),
-    )
-
-    server.registerTool(
-      'recovery_plan_reject',
-      {
-        description: 'Reject one pending recovery plan using an out-of-band approval token.',
-        inputSchema: planRejectionInputSchema,
-        annotations: { readOnlyHint: false, destructiveHint: false },
-      },
-      async ({ planId, approvalToken, reason }) => this.toolResult(
-        await this.toolRouter.callTool('recovery_plan_reject', { planId, approvalToken, reason }),
       ),
     )
 

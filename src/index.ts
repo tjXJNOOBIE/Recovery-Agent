@@ -21,3 +21,6 @@ export { RecoveryPlanProposalParser } from './control/plan/RecoveryPlanProposalP
 export { StrandsRecoveryPlanner } from './control/plan/StrandsRecoveryPlanner.js'
 export type { RecoveryPlan, RecoveryPlanAction, RecoveryPlanActionType, RecoveryPlanProposal, RecoveryPlanRisk, RecoveryPlanStatus } from './control/plan/RecoveryPlan.js'
 export { RecoveryApprovalVerifier } from './control/approval/RecoveryApprovalVerifier.js'
+export { RecoveryApprovalSocketClient } from './control/approval/socket/RecoveryApprovalSocketClient.js'
+export { RecoveryApprovalSocketPathResolver } from './control/approval/socket/RecoveryApprovalSocketPathResolver.js'
+export { RecoveryApprovalSocketServer } from './control/approval/socket/RecoveryApprovalSocketServer.js'

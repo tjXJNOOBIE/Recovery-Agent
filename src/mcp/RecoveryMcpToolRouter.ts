@@ -28,26 +28,6 @@ export class RecoveryMcpToolRouter {
       { name: 'incident_inspect', description: 'Inspect one recovery incident and its timeline.', inputSchema: this.idSchema('incidentId') },
       { name: 'recovery_plan_list', description: 'List typed recovery plans proposed after bounded automatic recovery is exhausted.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'recovery_plan_inspect', description: 'Inspect one typed recovery plan and its approval status.', inputSchema: this.idSchema('planId') },
-      {
-        name: 'recovery_plan_approve',
-        description: 'Explicitly approve and execute one pending elevated recovery plan using the out-of-band approval token.',
-        inputSchema: {
-          type: 'object',
-          properties: { planId: { type: 'string' }, approvalToken: { type: 'string' } },
-          required: ['planId', 'approvalToken'],
-          additionalProperties: false,
-        },
-      },
-      {
-        name: 'recovery_plan_reject',
-        description: 'Explicitly reject one pending recovery plan using the out-of-band approval token.',
-        inputSchema: {
-          type: 'object',
-          properties: { planId: { type: 'string' }, approvalToken: { type: 'string' }, reason: { type: 'string' } },
-          required: ['planId', 'approvalToken', 'reason'],
-          additionalProperties: false,
-        },
-      },
     ]
   }
 
@@ -63,15 +43,6 @@ export class RecoveryMcpToolRouter {
       case 'incident_inspect': return this.controlRuntime.inspectIncident(this.requireString(args, 'incidentId'))
       case 'recovery_plan_list': return this.controlRuntime.listRecoveryPlans()
       case 'recovery_plan_inspect': return this.controlRuntime.inspectRecoveryPlan(this.requireString(args, 'planId'))
-      case 'recovery_plan_approve': return this.controlRuntime.approveRecoveryPlan(
-        this.requireString(args, 'planId'),
-        this.requireString(args, 'approvalToken'),
-      )
-      case 'recovery_plan_reject': return this.controlRuntime.rejectRecoveryPlan(
-        this.requireString(args, 'planId'),
-        this.requireString(args, 'approvalToken'),
-        this.requireString(args, 'reason'),
-      )
       default: throw new Error(`Unknown Recovery Agent MCP tool: ${name}`)
     }
   }
