@@ -4,7 +4,7 @@ Recovery Agent is a control-host recovery runtime for Linux services. It keeps A
 
 **Agents for Humans track:** Professional
 
-> **Current status:** Draft E2E foundation. Deterministic recovery, recurring watches, rolling restart budgets, dependency-aware recovery, typed Strands proposals, owner-only human approval, concurrency/suppression barriers, and partial-fleet operation are runnable. Remote production transport, physical npm/Strands/MCP validation, durable audit state, broader watch packs, and broader adapters remain promotion gates.
+> **Current status:** Draft E2E foundation. Deterministic service recovery, recurring service and Linux node watches, rolling restart budgets, dependency-aware recovery, typed Strands proposals, owner-only human approval, concurrency/suppression barriers, and partial-fleet operation are runnable. Remote production transport, physical npm/Strands/MCP validation, durable audit state, richer watch packs, and broader adapters remain promotion gates.
 
 ## Current runtime
 
@@ -15,7 +15,11 @@ MCP host
           -> partial-fleet inspection
           -> node HTTP boundary
               -> fixed systemd service mappings
+              -> Linux resource evidence
           -> recurring service watches
+          -> recurring node-resource watches
+              -> deterministic threshold evaluation
+              -> node-health incident lifecycle
           -> dependency graph + dependency-first sweeps
           -> rolling automatic restart budget
           -> per-target in-flight recovery coalescing
@@ -40,7 +44,7 @@ npm install
 npm run demo
 ```
 
-The demo starts an ephemeral loopback node server and drives the same HTTP gateway, control runtime, watch path, incident path, and planner boundary used by the product. It is explicitly labeled `SIMULATED DEMONSTRATION` and never pretends fake model/service behavior is production evidence.
+The demo starts an ephemeral loopback node server and drives the same HTTP gateway, control runtime, combined watch path, incident path, and planner boundary used by the product. It is explicitly labeled `SIMULATED DEMONSTRATION` and never pretends fake model/service behavior is production evidence. Demo node resources are explicitly simulated rather than presented as host evidence.
 
 ## Node agent
 
@@ -50,6 +54,8 @@ recovery-agent node ./node.json
 ```
 
 Public service IDs map to configured systemd units. Remote callers cannot supply a unit name or shell command.
+
+The production Linux node runtime also exposes deterministic resource evidence through `/v1/node`. `LinuxNodeResourceProbe` reads memory/swap from `/proc/meminfo`, load/CPU/uptime from Node OS APIs, and root-filesystem capacity from `statfs`; it does not execute a shell command.
 
 The current node HTTP transport defaults to loopback. Do not expose it directly to the public Internet. Remote production use still requires a private network/tunnel or trusted TLS termination until outbound enrollment, mTLS, and credential rotation are implemented.
 
@@ -136,6 +142,37 @@ These barriers keep a recurring watch from turning into a restart loop wearing a
 
 `node_inspect` provides direct read-only inspection for a configured node.
 
+## Built-in Linux Node Watch
+
+Every configured node receives a deterministic resource watch. Production snapshots currently include:
+
+- memory used percent;
+- swap used percent;
+- root-filesystem used percent;
+- one-minute load average normalized per CPU;
+- uptime.
+
+Default thresholds are intentionally conservative and configurable through the watch definition layer:
+
+```text
+memory used                 > 92%
+swap used                   > 80%
+root filesystem used        > 90%
+1m load average / CPU       > 2.0
+```
+
+Node Watch states are `healthy`, `degraded`, `unreachable`, and `unsupported`. A degraded or unreachable node opens or updates a process-local node-health incident with the exact violations/evidence. A later healthy observation resolves that incident. Unsupported resource telemetry is recorded explicitly rather than guessed.
+
+Node Watch is **read-only**. Resource pressure does not automatically reboot, drain, or mutate a node. Recovery actions at that risk level remain a separate policy/human-approval problem.
+
+`watch_list` returns combined state:
+
+- service watches;
+- node watches;
+- node-health incidents.
+
+`watch_run` forces the combined node + service watch surface. Automatic coordinator runs serialize the node watch pass before the service watch pass.
+
 ## Human approval
 
 A valid Strands proposal is target-bound by deterministic incident state and stored as `pending_approval`. The planner may return only strict `{action, rationale}` JSON and cannot supply another node/service, command, credential, or arbitrary argument.
@@ -150,9 +187,11 @@ recovery-agent reject <plan-id> 'reason'
 
 The approval socket defaults to a per-user path under the OS temp directory and can be overridden with `RECOVERY_APPROVAL_SOCKET`. Recovery Agent creates it with mode `0600`. Wrong-token requests execute no mutation. A valid approval executes exactly one already-bound typed action and performs a fresh verification.
 
-## Built-in watches
+## Built-in service watches
 
 Configured services are watched by default at a 30-second interval unless disabled. Watches reuse `recoverService`, so rolling budgets, dependency gates, in-flight coalescing, approval suppression, human escalation suppression, Strands escalation, and post-action verification are identical for automatic and user-triggered recovery.
+
+The current service health signal is still systemd lifecycle health. Configured HTTP/TCP health probes are the next implementation slice so an `active` process cannot masquerade as a healthy application merely because systemd has not buried it yet.
 
 ## Strands boundary
 
