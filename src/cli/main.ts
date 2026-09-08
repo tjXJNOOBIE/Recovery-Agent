@@ -10,11 +10,15 @@ import { RecoveryApprovalSocketClient } from '../control/approval/socket/Recover
 import { RecoveryApprovalSocketPathResolver } from '../control/approval/socket/RecoveryApprovalSocketPathResolver.js'
 import { RecoveryApprovalSocketServer } from '../control/approval/socket/RecoveryApprovalSocketServer.js'
 import { RecoveryControlRuntimeBuilder } from '../control/runtime/RecoveryControlRuntimeBuilder.js'
+import { RecoveryWatchCoordinator } from '../control/watch/RecoveryWatchCoordinator.js'
 import { RecoveryWatchDefinitionBuilder } from '../control/watch/RecoveryWatchDefinitionBuilder.js'
 import { RecoveryWatchService } from '../control/watch/RecoveryWatchService.js'
+import { RecoveryNodeWatchDefinitionBuilder } from '../control/watch/node/RecoveryNodeWatchDefinitionBuilder.js'
+import { RecoveryNodeWatchService } from '../control/watch/node/RecoveryNodeWatchService.js'
 import { RecoveryDemoHandler } from '../demo/RecoveryDemoHandler.js'
 import { RecoveryMcpToolRouter } from '../mcp/RecoveryMcpToolRouter.js'
 import { RecoveryMcpServer } from '../mcp/RecoveryMcpServer.js'
+import { LinuxNodeResourceProbe } from '../node/health/LinuxNodeResourceProbe.js'
 import { NodeAgentHttpServer } from '../node/http/NodeAgentHttpServer.js'
 import { SystemdNodeServiceRuntime } from '../node/systemd/SystemdNodeServiceRuntime.js'
 import { RecoveryAgentCliHandler } from './RecoveryAgentCliHandler.js'
@@ -34,9 +38,7 @@ function requireArgument(args: readonly string[], index: number, label: string):
 
 function requireApprovalToken(): string {
   const token = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
-  if (token === undefined || token.length < 16) {
-    throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters')
-  }
+  if (token === undefined || token.length < 16) throw new Error('RECOVERY_APPROVAL_TOKEN must contain at least 16 characters')
   return token
 }
 
@@ -68,7 +70,11 @@ async function main(): Promise<void> {
     const config = new RecoveryNodeConfigReader().read(configPath)
     const token = process.env[config.tokenEnvironmentVariable]?.trim()
     if (token === undefined || token.length < 16) throw new Error(`Environment variable ${config.tokenEnvironmentVariable} must contain a node token of at least 16 characters`)
-    const server = new NodeAgentHttpServer(new SystemdNodeServiceRuntime(config.nodeId, config.services), token)
+    const server = new NodeAgentHttpServer(
+      new SystemdNodeServiceRuntime(config.nodeId, config.services),
+      token,
+      new LinuxNodeResourceProbe(),
+    )
     const address = await server.listen(config.listenPort, config.listenHost)
     process.stderr.write(`Recovery node ${config.nodeId} listening on ${address.baseUrl}\n`)
     await new Promise<void>((resolve) => {
@@ -84,8 +90,10 @@ async function main(): Promise<void> {
     const config = new RecoveryControlConfigReader().read(configPath)
     const bootstrap = new StrandsAgentRuntimeBootstrap()
     const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env).build(config)
-    const watchService = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
-    const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watchService))
+    const serviceWatches = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
+    const nodeWatches = new RecoveryNodeWatchService(control, new RecoveryNodeWatchDefinitionBuilder().build(config))
+    const watches = new RecoveryWatchCoordinator(serviceWatches, nodeWatches)
+    const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watches))
     const approvalToken = process.env['RECOVERY_APPROVAL_TOKEN']?.trim()
     const approvalServer = approvalToken === undefined || approvalToken.length === 0
       ? undefined
@@ -95,7 +103,7 @@ async function main(): Promise<void> {
       await approvalServer.listen()
       process.stderr.write(`Recovery approval socket listening at ${new RecoveryApprovalSocketPathResolver().resolve(process.env)}\n`)
     }
-    watchService.start()
+    watches.start()
     mcpServer.serve()
 
     await new Promise<void>((resolve, reject) => {
@@ -104,7 +112,7 @@ async function main(): Promise<void> {
         if (closing) return
         closing = true
         void mcpServer.close()
-          .then(() => watchService.close())
+          .then(() => watches.close())
           .then(() => approvalServer?.close())
           .then(() => control.close())
           .then(resolve, reject)

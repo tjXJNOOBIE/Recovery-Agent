@@ -14,11 +14,15 @@ import type { RecoveryPlanProposal } from '../control/plan/RecoveryPlan.js'
 import { RecoveryOperationGate } from '../control/recovery/RecoveryOperationGate.js'
 import { RecoveryOrchestrator } from '../control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
+import { RecoveryWatchCoordinator } from '../control/watch/RecoveryWatchCoordinator.js'
 import type { RecoveryWatchDefinition } from '../control/watch/RecoveryWatchDefinition.js'
 import { RecoveryWatchService } from '../control/watch/RecoveryWatchService.js'
+import { DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS } from '../control/watch/node/RecoveryNodeWatchDefinition.js'
+import { RecoveryNodeWatchService } from '../control/watch/node/RecoveryNodeWatchService.js'
+import { RecoveryMcpToolRouter } from '../mcp/RecoveryMcpToolRouter.js'
+import type { NodeResourceSnapshot } from '../node/data/NodeResourceSnapshot.js'
 import { HttpNodeAgentGateway } from '../node/http/HttpNodeAgentGateway.js'
 import { NodeAgentHttpServer } from '../node/http/NodeAgentHttpServer.js'
-import { RecoveryMcpToolRouter } from '../mcp/RecoveryMcpToolRouter.js'
 import { DemoNodeServiceRuntime } from './runtime/DemoNodeServiceRuntime.js'
 
 class DemoRecoveryInvestigator implements IRecoveryInvestigator {
@@ -39,6 +43,21 @@ class DemoRecoveryPlanner implements IRecoveryPlanner {
   }
 }
 
+const DEMO_NODE_RESOURCES: NodeResourceSnapshot = {
+  observedAt: '2026-09-08T00:00:00.000Z',
+  uptimeSeconds: 3600,
+  loadAverage1mPerCpu: 0.35,
+  memoryTotalBytes: 8_589_934_592,
+  memoryAvailableBytes: 5_368_709_120,
+  memoryUsedPercent: 37.5,
+  swapTotalBytes: 2_147_483_648,
+  swapFreeBytes: 2_147_483_648,
+  swapUsedPercent: 0,
+  rootFilesystemTotalBytes: 107_374_182_400,
+  rootFilesystemAvailableBytes: 64_424_509_440,
+  rootFilesystemUsedPercent: 40,
+}
+
 export interface RecoveryDemoResult {
   readonly label: 'SIMULATED DEMONSTRATION'
   readonly before: unknown
@@ -56,7 +75,7 @@ export class RecoveryDemoHandler {
       { id: 'worker', lifecycleState: 'stopped', healthy: false, restartRestoresHealth: true },
       { id: 'payments', lifecycleState: 'failed', healthy: false, restartRestoresHealth: false },
     ])
-    const nodeServer = new NodeAgentHttpServer(nodeRuntime, token)
+    const nodeServer = new NodeAgentHttpServer(nodeRuntime, token, { inspect: async () => DEMO_NODE_RESOURCES })
     const address = await nodeServer.listen()
     const gateway = new HttpNodeAgentGateway('demo-east', address.baseUrl, token)
     const incidents = new InMemoryIncidentRepository()
@@ -65,12 +84,7 @@ export class RecoveryDemoHandler {
       { nodeId: 'demo-east', serviceId: 'worker', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 2, restartBudgetWindowMs: 600_000 },
       { nodeId: 'demo-east', serviceId: 'payments', expectedState: 'running', restartAllowed: true, maxRestartAttempts: 1, restartBudgetWindowMs: 600_000 },
     ]
-    const escalationHandler = new RecoveryEscalationHandler(
-      incidents,
-      new DemoRecoveryInvestigator(),
-      new DemoRecoveryPlanner(),
-      plans,
-    )
+    const escalationHandler = new RecoveryEscalationHandler(incidents, new DemoRecoveryInvestigator(), new DemoRecoveryPlanner(), plans)
     const planControl = new RecoveryPlanControl(
       plans,
       new RecoveryPlanApprovalHandler(
@@ -83,12 +97,7 @@ export class RecoveryDemoHandler {
     const control = new RecoveryControlRuntime(
       [gateway],
       policies,
-      new RecoveryOrchestrator(
-        new RecoveryPolicyResolver(),
-        incidents,
-        escalationHandler,
-        new RecoveryAutomaticRestartBudget(),
-      ),
+      new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, escalationHandler, new RecoveryAutomaticRestartBudget()),
       incidents,
       planControl,
       new RecoveryOperationGate(),
@@ -98,8 +107,14 @@ export class RecoveryDemoHandler {
       serviceId: policy.serviceId,
       intervalMs: 30_000,
     }))
-    const watchService = new RecoveryWatchService(control, watchDefinitions)
-    const tools = new RecoveryMcpToolRouter(control, watchService)
+    const serviceWatches = new RecoveryWatchService(control, watchDefinitions)
+    const nodeWatches = new RecoveryNodeWatchService(control, [{
+      nodeId: 'demo-east',
+      intervalMs: 30_000,
+      thresholds: DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS,
+    }])
+    const watches = new RecoveryWatchCoordinator(serviceWatches, nodeWatches)
+    const tools = new RecoveryMcpToolRouter(control, watches)
 
     try {
       const before = await tools.callTool('fleet_status')
@@ -118,7 +133,7 @@ export class RecoveryDemoHandler {
         plans: planList,
       }
     } finally {
-      await watchService.close()
+      await watches.close()
       await control.close()
       await nodeServer.close()
     }

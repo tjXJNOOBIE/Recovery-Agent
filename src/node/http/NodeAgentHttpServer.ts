@@ -1,6 +1,7 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
+import type { INodeResourceProbe } from '../health/INodeResourceProbe.js'
 import type { INodeServiceRuntime } from '../runtime/INodeServiceRuntime.js'
 
 export interface NodeAgentHttpServerAddress {
@@ -12,53 +13,34 @@ export interface NodeAgentHttpServerAddress {
 export class NodeAgentHttpServer {
   private readonly runtime: INodeServiceRuntime
   private readonly bearerToken: string
+  private readonly resourceProbe: INodeResourceProbe | undefined
   private server: Server | undefined
 
-  public constructor(runtime: INodeServiceRuntime, bearerToken: string) {
+  public constructor(runtime: INodeServiceRuntime, bearerToken: string, resourceProbe?: INodeResourceProbe) {
     const normalizedToken = bearerToken.trim()
-    if (normalizedToken.length < 16) {
-      throw new Error('Node bearer token must contain at least 16 non-blank characters')
-    }
+    if (normalizedToken.length < 16) throw new Error('Node bearer token must contain at least 16 non-blank characters')
     this.runtime = runtime
     this.bearerToken = normalizedToken
+    this.resourceProbe = resourceProbe
   }
 
   public async listen(port = 0, host = '127.0.0.1'): Promise<NodeAgentHttpServerAddress> {
-    if (this.server !== undefined) {
-      throw new Error('Node agent HTTP server is already listening')
-    }
-
-    const server = createServer((request, response) => {
-      void this.handleRequest(request, response)
-    })
+    if (this.server !== undefined) throw new Error('Node agent HTTP server is already listening')
+    const server = createServer((request, response) => { void this.handleRequest(request, response) })
     this.server = server
-
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
-      server.listen(port, host, () => {
-        server.off('error', reject)
-        resolve()
-      })
+      server.listen(port, host, () => { server.off('error', reject); resolve() })
     })
-
     const address = server.address()
-    if (address === null || typeof address === 'string') {
-      throw new Error('Node agent HTTP server did not expose a TCP address')
-    }
-
-    return {
-      host,
-      port: address.port,
-      baseUrl: `http://${host}:${address.port}`,
-    }
+    if (address === null || typeof address === 'string') throw new Error('Node agent HTTP server did not expose a TCP address')
+    return { host, port: address.port, baseUrl: `http://${host}:${address.port}` }
   }
 
   public async close(): Promise<void> {
     const server = this.server
     this.server = undefined
-    if (server === undefined) {
-      return
-    }
+    if (server === undefined) return
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error === undefined ? resolve() : reject(error))
     })
@@ -75,11 +57,15 @@ export class NodeAgentHttpServer {
       const pathSegments = url.pathname.split('/').filter((segment) => segment.length > 0)
 
       if (request.method === 'GET' && url.pathname === '/v1/node') {
-        const services = await this.runtime.listServices()
+        const [services, resources] = await Promise.all([
+          this.runtime.listServices(),
+          this.resourceProbe?.inspect(),
+        ])
         this.writeJson(response, 200, {
           nodeId: this.runtime.nodeId,
           observedAt: new Date().toISOString(),
           services,
+          ...(resources === undefined ? {} : { resources }),
         })
         return
       }
@@ -112,9 +98,7 @@ export class NodeAgentHttpServer {
   }
 
   private isAuthorized(authorization: string | undefined): boolean {
-    if (authorization === undefined || !authorization.startsWith('Bearer ')) {
-      return false
-    }
+    if (authorization === undefined || !authorization.startsWith('Bearer ')) return false
     const received = Buffer.from(authorization.slice('Bearer '.length))
     const expected = Buffer.from(this.bearerToken)
     return received.length === expected.length && timingSafeEqual(received, expected)

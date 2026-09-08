@@ -1,5 +1,5 @@
 import type { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
-import type { RecoveryWatchService } from '../control/watch/RecoveryWatchService.js'
+import type { RecoveryWatchSurface } from '../control/watch/RecoveryWatchSurface.js'
 
 export interface McpToolDefinition {
   readonly name: string
@@ -9,11 +9,11 @@ export interface McpToolDefinition {
 
 export class RecoveryMcpToolRouter {
   private readonly controlRuntime: RecoveryControlRuntime
-  private readonly watchService: RecoveryWatchService
+  private readonly watchSurface: RecoveryWatchSurface
 
-  public constructor(controlRuntime: RecoveryControlRuntime, watchService: RecoveryWatchService) {
+  public constructor(controlRuntime: RecoveryControlRuntime, watchSurface: RecoveryWatchSurface) {
     this.controlRuntime = controlRuntime
-    this.watchService = watchService
+    this.watchSurface = watchSurface
   }
 
   public listTools(): readonly McpToolDefinition[] {
@@ -23,8 +23,8 @@ export class RecoveryMcpToolRouter {
       { name: 'service_inspect', description: 'Inspect one configured service.', inputSchema: this.nodeServiceSchema() },
       { name: 'service_recover', description: 'Run bounded policy-controlled recovery for one configured service.', inputSchema: this.nodeServiceSchema() },
       { name: 'health_sweep', description: 'Check reachable configured services and recover unhealthy services within policy.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-      { name: 'watch_list', description: 'List configured built-in recovery watches and their latest runtime state.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-      { name: 'watch_run', description: 'Run every configured recovery watch immediately through the same bounded recovery path.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'watch_list', description: 'List built-in service/node watches, node-health incidents, and latest runtime state.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'watch_run', description: 'Run built-in node and service watches immediately through deterministic watch paths.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'incident_list', description: 'List recovery incidents from this control runtime.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'incident_inspect', description: 'Inspect one recovery incident and its timeline.', inputSchema: this.idSchema('incidentId') },
       { name: 'recovery_plan_list', description: 'List typed recovery plans proposed after bounded automatic recovery is exhausted.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -39,8 +39,8 @@ export class RecoveryMcpToolRouter {
       case 'service_inspect': return this.controlRuntime.inspectService(this.requireString(args, 'nodeId'), this.requireString(args, 'serviceId'))
       case 'service_recover': return this.controlRuntime.recoverService(this.requireString(args, 'nodeId'), this.requireString(args, 'serviceId'))
       case 'health_sweep': return this.controlRuntime.healthSweep()
-      case 'watch_list': return this.watchService.listStates()
-      case 'watch_run': return this.watchService.runAllNow()
+      case 'watch_list': return this.watchSurface.listStates()
+      case 'watch_run': return this.watchSurface.runAllNow()
       case 'incident_list': return this.controlRuntime.listIncidents()
       case 'incident_inspect': return this.controlRuntime.inspectIncident(this.requireString(args, 'incidentId'))
       case 'recovery_plan_list': return this.controlRuntime.listRecoveryPlans()

@@ -1,3 +1,5 @@
+import type { NodeResourceSnapshot } from './NodeResourceSnapshot.js'
+
 export type ServiceLifecycleState = 'running' | 'stopped' | 'failed' | 'unknown'
 
 export interface ServiceSnapshot {
@@ -14,4 +16,5 @@ export interface NodeSnapshot {
   readonly nodeId: string
   readonly observedAt: string
   readonly services: readonly ServiceSnapshot[]
+  readonly resources?: NodeResourceSnapshot
 }
