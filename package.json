@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "state-authority-runtime",
     "examples",
     "README.md",
     "LICENSE"
@@ -25,11 +26,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:state-authority": "gradle -p state-authority installDist --no-daemon",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test \".test-dist/test/**/*.test.js\"",
     "check": "npm run typecheck && npm run test && npm run build",
     "demo": "npm run build && node dist/cli/main.js demo",
-    "prepack": "npm run build"
+    "prepack": "npm run build && npm run build:state-authority"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",

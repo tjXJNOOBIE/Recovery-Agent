@@ -41,6 +41,14 @@ application {
     mainClass.set("org.tavall.recovery.state.RecoveryStateAuthorityMain")
 }
 
+tasks.named<Sync>("installDist") {
+    into(project.layout.projectDirectory.dir("../state-authority-runtime"))
+}
+
+tasks.named<Delete>("clean") {
+    delete(project.layout.projectDirectory.dir("../state-authority-runtime"))
+}
+
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }

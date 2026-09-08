@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { StrandsAgentRuntimeBootstrap } from '@tjxjnoobie/custom-strands-bridge'
 
 import { RecoveryAgentRuntimeConfigBuilder } from '../agent/config/RecoveryAgentRuntimeConfigBuilder.js'
@@ -57,6 +59,22 @@ function optionalEnvironment(name: string): string | undefined {
   return value === undefined || value.length === 0 ? undefined : value
 }
 
+function resolveStateAuthorityCommand(): string | undefined {
+  const explicit = optionalEnvironment('RECOVERY_STATE_AUTHORITY_COMMAND')
+  if (explicit !== undefined) return explicit
+  if (optionalEnvironment('RECOVERY_STATE_JDBC_URL') === undefined) return undefined
+  if (process.platform === 'win32') {
+    throw new Error('Bundled Recovery state authority launch is currently supported on Linux/macOS control hosts; configure RECOVERY_STATE_AUTHORITY_COMMAND explicitly for another platform')
+  }
+
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url))
+  const bundled = resolve(moduleDirectory, '../../state-authority-runtime/bin/recovery-state-authority')
+  if (!existsSync(bundled)) {
+    throw new Error('Durable Recovery state was requested through RECOVERY_STATE_JDBC_URL, but the bundled state authority launcher is missing; install a packaged Recovery Agent build or set RECOVERY_STATE_AUTHORITY_COMMAND explicitly')
+  }
+  return bundled
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0]
@@ -93,8 +111,8 @@ async function main(): Promise<void> {
     )
     const address = await server.listen(config.listenPort, config.listenHost)
     process.stderr.write(`Recovery node ${config.nodeId} listening on ${address.baseUrl}\n`)
-    await new Promise<void>((resolve) => {
-      const stop = (): void => { void server.close().finally(resolve) }
+    await new Promise<void>((resolvePromise) => {
+      const stop = (): void => { void server.close().finally(resolvePromise) }
       process.once('SIGINT', stop)
       process.once('SIGTERM', stop)
     })
@@ -137,7 +155,7 @@ async function main(): Promise<void> {
     )
 
     let durability: RecoveryDurableStateCoordinator | undefined
-    const authorityCommand = optionalEnvironment('RECOVERY_STATE_AUTHORITY_COMMAND')
+    const authorityCommand = resolveStateAuthorityCommand()
     if (authorityCommand !== undefined) {
       const authority = await RecoveryStateAuthorityProcessClient.start({ command: authorityCommand })
       durability = new RecoveryDurableStateCoordinator(authority, control, semanticWatches)
@@ -175,7 +193,7 @@ async function main(): Promise<void> {
 
     watches.start()
     mcpServer.serve()
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolvePromise, reject) => {
       let closing = false
       const stop = (): void => {
         if (closing) return
@@ -185,7 +203,7 @@ async function main(): Promise<void> {
           .then(() => approvalServer?.close())
           .then(() => durability?.close())
           .then(() => control.close())
-          .then(resolve, reject)
+          .then(resolvePromise, reject)
       }
       process.once('SIGINT', stop)
       process.once('SIGTERM', stop)
