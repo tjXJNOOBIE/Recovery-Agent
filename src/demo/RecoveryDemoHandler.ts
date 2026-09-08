@@ -10,6 +10,7 @@ import { InMemoryRecoveryPlanRepository } from '../control/plan/InMemoryRecovery
 import { RecoveryEscalationHandler } from '../control/plan/RecoveryEscalationHandler.js'
 import { RecoveryPlanControl } from '../control/plan/RecoveryPlanControl.js'
 import type { RecoveryPlanProposal } from '../control/plan/RecoveryPlan.js'
+import { RecoveryOperationGate } from '../control/recovery/RecoveryOperationGate.js'
 import { RecoveryOrchestrator } from '../control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
 import type { RecoveryWatchDefinition } from '../control/watch/RecoveryWatchDefinition.js'
@@ -84,6 +85,7 @@ export class RecoveryDemoHandler {
       new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, escalationHandler),
       incidents,
       planControl,
+      new RecoveryOperationGate(),
     )
     const watchDefinitions: readonly RecoveryWatchDefinition[] = policies.map((policy) => ({
       nodeId: policy.nodeId,

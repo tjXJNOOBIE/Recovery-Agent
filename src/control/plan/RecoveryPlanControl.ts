@@ -19,6 +19,14 @@ export class RecoveryPlanControl {
     return this.repository.require(planId)
   }
 
+  public findPending(nodeId: string, serviceId: string): RecoveryPlan | undefined {
+    return this.repository.findPending(nodeId, serviceId)
+  }
+
+  public supersede(planId: string, outcome: string): RecoveryPlan {
+    return this.repository.transition(planId, 'pending_approval', 'superseded', outcome)
+  }
+
   public approve(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
     return this.approvalHandler.approveAndExecute(planId, approvalToken)
   }

@@ -9,6 +9,7 @@ import type { IRecoveryPlanner } from '../../src/control/plan/IRecoveryPlanner.j
 import { InMemoryRecoveryPlanRepository } from '../../src/control/plan/InMemoryRecoveryPlanRepository.js'
 import { RecoveryEscalationHandler } from '../../src/control/plan/RecoveryEscalationHandler.js'
 import { RecoveryPlanControl } from '../../src/control/plan/RecoveryPlanControl.js'
+import { RecoveryOperationGate } from '../../src/control/recovery/RecoveryOperationGate.js'
 import { RecoveryOrchestrator } from '../../src/control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../../src/control/runtime/RecoveryControlRuntime.js'
 import type { INodeAgentGateway } from '../../src/node/gateway/INodeAgentGateway.js'
@@ -42,6 +43,6 @@ export function buildRecoveryTestGraph(
       new ApprovedRecoveryExecutor(gateways, policies),
     ),
   )
-  const control = new RecoveryControlRuntime(gateways, policies, orchestrator, incidents, planControl)
+  const control = new RecoveryControlRuntime(gateways, policies, orchestrator, incidents, planControl, new RecoveryOperationGate())
   return { incidents, plans, orchestrator, planControl, control }
 }

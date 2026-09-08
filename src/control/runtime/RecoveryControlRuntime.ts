@@ -1,11 +1,12 @@
 import type { NodeSnapshot, ServiceSnapshot } from '../../node/data/ServiceSnapshot.js'
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
+import type { RecoveryPlanApprovalResult } from '../approval/RecoveryPlanApprovalHandler.js'
 import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
 import type { InMemoryIncidentRepository } from '../incident/repository/InMemoryIncidentRepository.js'
-import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
-import type { RecoveryPlanApprovalResult } from '../approval/RecoveryPlanApprovalHandler.js'
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
 import type { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
+import type { ServiceRecoveryPolicy } from '../policy/ServiceRecoveryPolicy.js'
+import type { RecoveryOperationGate } from '../recovery/RecoveryOperationGate.js'
 import type { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
 import type { RecoveryRunResult } from '../recovery/RecoveryRunResult.js'
 
@@ -21,6 +22,7 @@ export class RecoveryControlRuntime {
   private readonly recoveryOrchestrator: RecoveryOrchestrator
   private readonly incidentRepository: InMemoryIncidentRepository
   private readonly planControl: RecoveryPlanControl
+  private readonly operationGate: RecoveryOperationGate
 
   public constructor(
     gateways: readonly INodeAgentGateway[],
@@ -28,12 +30,14 @@ export class RecoveryControlRuntime {
     recoveryOrchestrator: RecoveryOrchestrator,
     incidentRepository: InMemoryIncidentRepository,
     planControl: RecoveryPlanControl,
+    operationGate: RecoveryOperationGate,
   ) {
     this.gateways = [...gateways]
     this.policies = [...policies]
     this.recoveryOrchestrator = recoveryOrchestrator
     this.incidentRepository = incidentRepository
     this.planControl = planControl
+    this.operationGate = operationGate
   }
 
   public async fleetStatus(): Promise<FleetStatusResult> {
@@ -52,7 +56,12 @@ export class RecoveryControlRuntime {
 
   public recoverService(nodeId: string, serviceId: string): Promise<RecoveryRunResult> {
     const policy = this.requirePolicy(nodeId, serviceId)
-    return this.recoveryOrchestrator.recover(this.requireGateway(nodeId), policy)
+    const gateway = this.requireGateway(nodeId)
+    return this.operationGate.run(
+      nodeId,
+      serviceId,
+      () => this.recoverOrRespectPendingPlan(gateway, policy),
+    )
   }
 
   public async healthSweep(): Promise<readonly RecoveryRunResult[]> {
@@ -100,6 +109,47 @@ export class RecoveryControlRuntime {
     }
     if (failures.length > 0) {
       throw new AggregateError(failures, 'Failed to close one or more node gateways')
+    }
+  }
+
+  private async recoverOrRespectPendingPlan(
+    gateway: INodeAgentGateway,
+    policy: ServiceRecoveryPolicy,
+  ): Promise<RecoveryRunResult> {
+    const pendingPlan = this.planControl.findPending(policy.nodeId, policy.serviceId)
+    if (pendingPlan === undefined) {
+      return this.recoveryOrchestrator.recover(gateway, policy)
+    }
+
+    const snapshot = await gateway.inspectService(policy.serviceId)
+    let incident = this.incidentRepository.require(pendingPlan.incidentId)
+
+    if (snapshot.lifecycleState === policy.expectedState && snapshot.healthy) {
+      const supersededPlan = this.planControl.supersede(
+        pendingPlan.id,
+        'Service recovered before approval; pending plan was not executed',
+      )
+      incident = this.incidentRepository.append(
+        incident.id,
+        'resolved',
+        `Service recovered before approval; recovery plan ${pendingPlan.id} superseded without execution`,
+        'resolved',
+      )
+      return {
+        status: 'healthy',
+        snapshot,
+        incident,
+        recoveryPlan: supersededPlan,
+        restartAttempts: 0,
+      }
+    }
+
+    return {
+      status: 'approval_required',
+      snapshot,
+      incident,
+      recoveryPlan: pendingPlan,
+      restartAttempts: 0,
     }
   }
 

@@ -1,6 +1,6 @@
 export type RecoveryPlanActionType = 'restart_service'
 export type RecoveryPlanRisk = 'elevated'
-export type RecoveryPlanStatus = 'pending_approval' | 'approved' | 'executed' | 'rejected' | 'failed'
+export type RecoveryPlanStatus = 'pending_approval' | 'approved' | 'executed' | 'rejected' | 'failed' | 'superseded'
 
 export interface RecoveryPlanAction {
   readonly type: RecoveryPlanActionType

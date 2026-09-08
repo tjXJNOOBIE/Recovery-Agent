@@ -15,6 +15,7 @@ import { RecoveryEscalationHandler } from '../plan/RecoveryEscalationHandler.js'
 import { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
 import { RecoveryPlanProposalParser } from '../plan/RecoveryPlanProposalParser.js'
 import { StrandsRecoveryPlanner } from '../plan/StrandsRecoveryPlanner.js'
+import { RecoveryOperationGate } from '../recovery/RecoveryOperationGate.js'
 import { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from './RecoveryControlRuntime.js'
 
@@ -55,6 +56,7 @@ export class RecoveryControlRuntimeBuilder {
       orchestrator,
       incidentRepository,
       new RecoveryPlanControl(planRepository, approvalHandler),
+      new RecoveryOperationGate(),
     )
   }
 

@@ -42,6 +42,14 @@ export class InMemoryRecoveryPlanRepository {
     return plan
   }
 
+  public findPending(nodeId: string, serviceId: string): RecoveryPlan | undefined {
+    return this.plans.find((candidate) =>
+      candidate.nodeId === nodeId
+      && candidate.serviceId === serviceId
+      && candidate.status === 'pending_approval'
+    )
+  }
+
   public transition(id: string, expected: RecoveryPlanStatus, status: RecoveryPlanStatus, outcome?: string): RecoveryPlan {
     const current = this.require(id)
     if (current.status !== expected) {
