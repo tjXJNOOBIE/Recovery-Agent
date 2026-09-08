@@ -15,6 +15,8 @@ import { InMemoryRecoveryPlanRepository } from '../plan/InMemoryRecoveryPlanRepo
 import { RecoveryEscalationHandler } from '../plan/RecoveryEscalationHandler.js'
 import { RecoveryPlanControl } from '../plan/RecoveryPlanControl.js'
 import { RecoveryPlanProposalParser } from '../plan/RecoveryPlanProposalParser.js'
+import { RecoveryPlanReviewParser } from '../plan/RecoveryPlanReviewParser.js'
+import { StrandsRecoveryPlanCritic } from '../plan/StrandsRecoveryPlanCritic.js'
 import { StrandsRecoveryPlanner } from '../plan/StrandsRecoveryPlanner.js'
 import { RecoveryOperationGate } from '../recovery/RecoveryOperationGate.js'
 import { RecoveryOrchestrator } from '../recovery/RecoveryOrchestrator.js'
@@ -23,54 +25,21 @@ import { RecoveryControlRuntime } from './RecoveryControlRuntime.js'
 export class RecoveryControlRuntimeBuilder {
   private readonly bootstrap: IStrandsAgentRuntimeBootstrap
   private readonly environment: RecoveryAgentEnvironment
-
-  public constructor(bootstrap: IStrandsAgentRuntimeBootstrap, environment: RecoveryAgentEnvironment = process.env) {
-    this.bootstrap = bootstrap
-    this.environment = environment
-  }
+  public constructor(bootstrap: IStrandsAgentRuntimeBootstrap, environment: RecoveryAgentEnvironment = process.env) { this.bootstrap = bootstrap; this.environment = environment }
 
   public build(config: RecoveryControlConfig): RecoveryControlRuntime {
     const gateways = config.nodes.map((node) => new HttpNodeAgentGateway(node.id, node.baseUrl, this.requireSecret(node.tokenEnvironmentVariable)))
-    const policies: ServiceRecoveryPolicy[] = config.nodes.flatMap((node) => node.services.map((service) => ({
-      nodeId: node.id,
-      serviceId: service.id,
-      expectedState: 'running' as const,
-      restartAllowed: service.restartAllowed,
-      maxRestartAttempts: service.maxRestartAttempts,
-      restartBudgetWindowMs: service.restartBudgetWindowSeconds * 1_000,
-      dependencies: service.dependencies,
-    })))
-    const incidentRepository = new InMemoryIncidentRepository()
-    const planRepository = new InMemoryRecoveryPlanRepository()
-    const agentConfigBuilder = new RecoveryAgentRuntimeConfigBuilder(this.environment)
+    const policies: ServiceRecoveryPolicy[] = config.nodes.flatMap((node) => node.services.map((service) => ({ nodeId: node.id, serviceId: service.id, expectedState: 'running' as const, restartAllowed: service.restartAllowed, maxRestartAttempts: service.maxRestartAttempts, restartBudgetWindowMs: service.restartBudgetWindowSeconds * 1_000, dependencies: service.dependencies })))
+    const incidentRepository = new InMemoryIncidentRepository(); const planRepository = new InMemoryRecoveryPlanRepository(); const agentConfigBuilder = new RecoveryAgentRuntimeConfigBuilder(this.environment)
     const investigator = new StrandsRecoveryInvestigator(this.bootstrap, agentConfigBuilder)
     const planner = new StrandsRecoveryPlanner(this.bootstrap, agentConfigBuilder, new RecoveryPlanProposalParser())
-    const escalationHandler = new RecoveryEscalationHandler(incidentRepository, investigator, planner, planRepository)
-    const orchestrator = new RecoveryOrchestrator(
-      new RecoveryPolicyResolver(),
-      incidentRepository,
-      escalationHandler,
-      new RecoveryAutomaticRestartBudget(),
-    )
-    const approvalHandler = new RecoveryPlanApprovalHandler(
-      planRepository,
-      incidentRepository,
-      new RecoveryApprovalVerifier(this.environment['RECOVERY_APPROVAL_TOKEN']),
-      new ApprovedRecoveryExecutor(gateways, policies),
-    )
-    return new RecoveryControlRuntime(
-      gateways,
-      policies,
-      orchestrator,
-      incidentRepository,
-      new RecoveryPlanControl(planRepository, approvalHandler),
-      new RecoveryOperationGate(),
-    )
+    const critic = new StrandsRecoveryPlanCritic(this.bootstrap, agentConfigBuilder, new RecoveryPlanReviewParser())
+    const escalationHandler = new RecoveryEscalationHandler(incidentRepository, investigator, planner, planRepository, critic)
+    const restartBudget = new RecoveryAutomaticRestartBudget()
+    const orchestrator = new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidentRepository, escalationHandler, restartBudget)
+    const approvalHandler = new RecoveryPlanApprovalHandler(planRepository, incidentRepository, new RecoveryApprovalVerifier(this.environment['RECOVERY_APPROVAL_TOKEN']), new ApprovedRecoveryExecutor(gateways, policies))
+    return new RecoveryControlRuntime(gateways, policies, orchestrator, incidentRepository, new RecoveryPlanControl(planRepository, approvalHandler), new RecoveryOperationGate())
   }
 
-  private requireSecret(environmentVariable: string): string {
-    const value = this.environment[environmentVariable]?.trim()
-    if (value === undefined || value.length < 16) throw new Error(`Environment variable ${environmentVariable} must contain a node token of at least 16 characters`)
-    return value
-  }
+  private requireSecret(environmentVariable: string): string { const value = this.environment[environmentVariable]?.trim(); if (value === undefined || value.length < 16) throw new Error(`Environment variable ${environmentVariable} must contain a node token of at least 16 characters`); return value }
 }
