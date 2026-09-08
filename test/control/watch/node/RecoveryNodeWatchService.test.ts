@@ -4,6 +4,8 @@ import test from 'node:test'
 import type { NodeResourceSnapshot } from '../../../../src/node/data/NodeResourceSnapshot.js'
 import type { NodeSnapshot } from '../../../../src/node/data/ServiceSnapshot.js'
 import { DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS } from '../../../../src/control/watch/node/RecoveryNodeWatchDefinition.js'
+import { NodeHealthIncidentRuntimeState } from '../../../../src/control/watch/node/NodeHealthIncidentRuntimeState.js'
+import { RecoveryNodeResourceEvaluator } from '../../../../src/control/watch/node/RecoveryNodeResourceEvaluator.js'
 import { RecoveryNodeWatchService } from '../../../../src/control/watch/node/RecoveryNodeWatchService.js'
 
 const baseResources: NodeResourceSnapshot = {
@@ -13,6 +15,8 @@ const baseResources: NodeResourceSnapshot = {
   swapTotalBytes: 1000, swapFreeBytes: 1000, swapUsedPercent: 0,
   rootFilesystemTotalBytes: 1000, rootFilesystemAvailableBytes: 500, rootFilesystemUsedPercent: 50,
 }
+
+const fixtureClock = (): number => Date.parse('2026-09-08T00:00:00.000Z')
 
 class SequencedNodeInspectionRuntime {
   public snapshot: NodeSnapshot | Error
@@ -32,11 +36,19 @@ function node(resources?: NodeResourceSnapshot): NodeSnapshot {
   }
 }
 
+function createWatchService(runtime: SequencedNodeInspectionRuntime): RecoveryNodeWatchService {
+  return new RecoveryNodeWatchService(
+    runtime,
+    [{ nodeId: 'node-a', intervalMs: 30_000, thresholds: DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS }],
+    new RecoveryNodeResourceEvaluator(),
+    new NodeHealthIncidentRuntimeState(),
+    fixtureClock,
+  )
+}
+
 test('opensAndClearsNodeHealthIncidentFromDeterministicResourceEvidence', async () => {
   const runtime = new SequencedNodeInspectionRuntime(node({ ...baseResources, memoryUsedPercent: 97 }))
-  const watches = new RecoveryNodeWatchService(runtime, [{
-    nodeId: 'node-a', intervalMs: 30_000, thresholds: DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS,
-  }])
+  const watches = createWatchService(runtime)
 
   const degraded = await watches.runAllNow(0)
   assert.equal(degraded[0]?.state.lastStatus, 'degraded')
@@ -53,9 +65,7 @@ test('opensAndClearsNodeHealthIncidentFromDeterministicResourceEvidence', async 
 
 test('recordsUnreachableAndUnsupportedNodeWatchStatesWithoutMutation', async () => {
   const runtime = new SequencedNodeInspectionRuntime(new Error('connection refused'))
-  const watches = new RecoveryNodeWatchService(runtime, [{
-    nodeId: 'node-a', intervalMs: 30_000, thresholds: DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS,
-  }])
+  const watches = createWatchService(runtime)
 
   const unreachable = await watches.runAllNow(0)
   assert.equal(unreachable[0]?.state.lastStatus, 'unreachable')
