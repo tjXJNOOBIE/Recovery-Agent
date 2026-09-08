@@ -19,7 +19,7 @@ MCP host
           -> bounded recovery policy
           -> verify after mutation
           -> Strands investigation + strict typed proposal only after deterministic recovery is exhausted
-          -> out-of-band approval token before elevated plan execution
+          -> owner-only Unix approval socket before elevated plan execution
 ```
 
 The current node action catalog is intentionally tiny: inspect service state and restart a configured systemd unit. There is no arbitrary shell execution surface.
@@ -79,13 +79,18 @@ Current MCP tools:
 - `incident_inspect`
 - `recovery_plan_list`
 - `recovery_plan_inspect`
-- `recovery_plan_approve`
-- `recovery_plan_reject`
 
 `service_recover` and `health_sweep` are bounded by configured policy. If that budget is exhausted, Strands may propose only a strict `{action, rationale}` plan. The deterministic core fixes the target from the incident, validates the action catalog, and stores the plan as `pending_approval`.
 
-`recovery_plan_approve` requires `RECOVERY_APPROVAL_TOKEN`, which is never returned by Recovery MCP. Without that out-of-band token, a proposed elevated action cannot execute. Approval still performs exactly one typed action followed by a fresh health inspection. `recovery_plan_reject` uses the same gate and records the rejection.
+Approval and rejection are intentionally **not MCP tools**. The MCP host can list and inspect pending plans, but it cannot approve its own proposal. On the control host, use the owner-only Unix socket through the CLI:
 
+```bash
+export RECOVERY_APPROVAL_TOKEN='replace-with-a-separate-long-approval-secret'
+recovery-agent approve <plan-id>
+recovery-agent reject <plan-id> 'reason'
+```
+
+The socket path defaults to a per-user path under the OS temp directory and can be overridden with `RECOVERY_APPROVAL_SOCKET`. Recovery Agent creates the socket with mode `0600`. A valid approval performs exactly one typed action followed by a fresh health inspection.
 
 ## Built-in service watches
 
