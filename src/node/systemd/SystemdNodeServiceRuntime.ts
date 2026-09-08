@@ -2,11 +2,18 @@ import { spawn } from 'node:child_process'
 
 import type { ServiceActionResult } from '../data/ServiceActionResult.js'
 import type { ServiceLifecycleState, ServiceSnapshot } from '../data/ServiceSnapshot.js'
+import { NodeServiceHealthProbe } from '../health/NodeServiceHealthProbe.js'
+import type {
+  IServiceHealthProbe,
+  ServiceHealthCheckDefinition,
+  ServiceHealthCheckResult,
+} from '../health/ServiceHealthCheck.js'
 import type { INodeServiceRuntime } from '../runtime/INodeServiceRuntime.js'
 
 export interface SystemdServiceDefinition {
   readonly id: string
   readonly unit: string
+  readonly healthChecks?: readonly ServiceHealthCheckDefinition[]
 }
 
 export interface CommandResult {
@@ -39,15 +46,18 @@ export class SystemdNodeServiceRuntime implements INodeServiceRuntime {
   public readonly nodeId: string
   private readonly services: readonly SystemdServiceDefinition[]
   private readonly commandExecutor: ICommandExecutor
+  private readonly healthProbe: IServiceHealthProbe
 
   public constructor(
     nodeId: string,
     services: readonly SystemdServiceDefinition[],
     commandExecutor: ICommandExecutor = new SpawnCommandExecutor(),
+    healthProbe: IServiceHealthProbe = new NodeServiceHealthProbe(),
   ) {
     this.nodeId = nodeId
     this.services = [...services]
     this.commandExecutor = commandExecutor
+    this.healthProbe = healthProbe
   }
 
   public async listServices(): Promise<readonly ServiceSnapshot[]> {
@@ -65,14 +75,25 @@ export class SystemdNodeServiceRuntime implements INodeServiceRuntime {
     const subState = values['SubState'] ?? 'unknown'
     const lifecycleState = this.resolveLifecycleState(activeState)
     const restartCount = Number.parseInt(values['NRestarts'] ?? '0', 10)
+    const systemdHealthy = result.exitCode === 0 && lifecycleState === 'running'
+    const healthChecks = systemdHealthy
+      ? await Promise.all((definition.healthChecks ?? []).map((check) => this.checkSafely(check)))
+      : []
+    const probesHealthy = healthChecks.every((check) => check.healthy)
+    const baseDetail = `${activeState}/${subState}; result=${values['Result'] ?? 'unknown'}`
+    const detail = healthChecks.length === 0
+      ? baseDetail
+      : `${baseDetail}; probes=${healthChecks.map((check) => `${check.type}:${check.healthy ? 'healthy' : 'unhealthy'}:${check.detail}`).join(' | ')}`
+
     return {
       nodeId: this.nodeId,
       serviceId,
       lifecycleState,
-      healthy: result.exitCode === 0 && lifecycleState === 'running',
-      detail: `${activeState}/${subState}; result=${values['Result'] ?? 'unknown'}`,
+      healthy: systemdHealthy && probesHealthy,
+      detail,
       observedAt: new Date().toISOString(),
       restartCount: Number.isFinite(restartCount) ? restartCount : 0,
+      ...(healthChecks.length === 0 ? {} : { healthChecks }),
     }
   }
 
@@ -85,6 +106,21 @@ export class SystemdNodeServiceRuntime implements INodeServiceRuntime {
       action: 'restart',
       message: result.exitCode === 0 ? `Restarted ${definition.unit}` : result.stderr.trim() || `systemctl exited ${result.exitCode}`,
       snapshot,
+    }
+  }
+
+  private async checkSafely(definition: ServiceHealthCheckDefinition): Promise<ServiceHealthCheckResult> {
+    try {
+      return await this.healthProbe.check(definition)
+    } catch (error: unknown) {
+      return {
+        type: definition.type,
+        target: definition.type === 'http' ? definition.url : `${definition.host}:${definition.port}`,
+        healthy: false,
+        detail: `Health probe failed: ${error instanceof Error ? error.message : String(error)}`,
+        observedAt: new Date().toISOString(),
+        latencyMs: 0,
+      }
     }
   }
 

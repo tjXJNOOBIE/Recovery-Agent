@@ -1,3 +1,4 @@
+import type { ServiceHealthCheckResult } from '../health/ServiceHealthCheck.js'
 import type { NodeResourceSnapshot } from './NodeResourceSnapshot.js'
 
 export type ServiceLifecycleState = 'running' | 'stopped' | 'failed' | 'unknown'
@@ -10,6 +11,7 @@ export interface ServiceSnapshot {
   readonly detail: string
   readonly observedAt: string
   readonly restartCount: number
+  readonly healthChecks?: readonly ServiceHealthCheckResult[]
 }
 
 export interface NodeSnapshot {

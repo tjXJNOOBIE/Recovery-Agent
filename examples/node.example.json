@@ -6,7 +6,21 @@
   "services": [
     {
       "id": "payments-api",
-      "unit": "payments-api.service"
+      "unit": "payments-api.service",
+      "healthChecks": [
+        {
+          "type": "http",
+          "url": "http://127.0.0.1:8080/health",
+          "timeoutMs": 2000,
+          "expectedStatusCodes": [200]
+        },
+        {
+          "type": "tcp",
+          "host": "127.0.0.1",
+          "port": 8080,
+          "timeoutMs": 2000
+        }
+      ]
     }
   ]
 }
