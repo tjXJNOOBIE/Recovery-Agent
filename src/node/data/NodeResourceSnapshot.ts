@@ -11,4 +11,8 @@ export interface NodeResourceSnapshot {
   readonly rootFilesystemTotalBytes: number
   readonly rootFilesystemAvailableBytes: number
   readonly rootFilesystemUsedPercent: number
+  readonly rootFilesystemTotalInodes?: number
+  readonly rootFilesystemAvailableInodes?: number
+  readonly rootFilesystemInodeUsedPercent?: number
+  readonly rootFilesystemReadOnly?: boolean
 }

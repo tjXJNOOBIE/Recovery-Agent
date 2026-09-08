@@ -35,3 +35,26 @@ test('reportsOnlyNodeResourceThresholdsThatAreExceeded', () => {
     'root_filesystem_used_percent',
   ])
 })
+
+test('reportsInodeExhaustionAndReadOnlyRootFilesystemAsDistinctEvidence', () => {
+  const violations = new RecoveryNodeResourceEvaluator().evaluate({
+    ...healthy,
+    rootFilesystemTotalInodes: 1000,
+    rootFilesystemAvailableInodes: 50,
+    rootFilesystemInodeUsedPercent: 95,
+    rootFilesystemReadOnly: true,
+  }, DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS)
+
+  assert.deepEqual(violations, [
+    {
+      metric: 'root_filesystem_inode_used_percent',
+      value: 95,
+      threshold: 90,
+    },
+    {
+      metric: 'root_filesystem_read_only',
+      value: true,
+      expected: false,
+    },
+  ])
+})

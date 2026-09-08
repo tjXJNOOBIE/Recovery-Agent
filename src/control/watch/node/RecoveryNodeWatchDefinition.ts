@@ -4,6 +4,7 @@ export interface RecoveryNodeResourceThresholds {
   readonly maxMemoryUsedPercent: number
   readonly maxSwapUsedPercent: number
   readonly maxRootFilesystemUsedPercent: number
+  readonly maxRootFilesystemInodeUsedPercent: number
   readonly maxLoadAverage1mPerCpu: number
 }
 
@@ -11,6 +12,7 @@ export const DEFAULT_RECOVERY_NODE_RESOURCE_THRESHOLDS: RecoveryNodeResourceThre
   maxMemoryUsedPercent: 92,
   maxSwapUsedPercent: 80,
   maxRootFilesystemUsedPercent: 90,
+  maxRootFilesystemInodeUsedPercent: 90,
   maxLoadAverage1mPerCpu: 2,
 }
 
@@ -20,17 +22,28 @@ export interface RecoveryNodeWatchDefinition {
   readonly thresholds: RecoveryNodeResourceThresholds
 }
 
-export type RecoveryNodeResourceMetric =
+export type RecoveryNodeNumericResourceMetric =
   | 'memory_used_percent'
   | 'swap_used_percent'
   | 'root_filesystem_used_percent'
+  | 'root_filesystem_inode_used_percent'
   | 'load_average_1m_per_cpu'
 
-export interface RecoveryNodeResourceViolation {
-  readonly metric: RecoveryNodeResourceMetric
+export type RecoveryNodeResourceMetric = RecoveryNodeNumericResourceMetric | 'root_filesystem_read_only'
+
+export interface RecoveryNodeNumericResourceViolation {
+  readonly metric: RecoveryNodeNumericResourceMetric
   readonly value: number
   readonly threshold: number
 }
+
+export interface RecoveryNodeReadOnlyFilesystemViolation {
+  readonly metric: 'root_filesystem_read_only'
+  readonly value: true
+  readonly expected: false
+}
+
+export type RecoveryNodeResourceViolation = RecoveryNodeNumericResourceViolation | RecoveryNodeReadOnlyFilesystemViolation
 
 export type RecoveryNodeWatchStatus = 'never_run' | 'healthy' | 'degraded' | 'unreachable' | 'unsupported'
 

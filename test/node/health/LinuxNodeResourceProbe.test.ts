@@ -12,4 +12,7 @@ test('readsFiniteLinuxResourceEvidenceWithoutShellExecution', async () => {
   assert.ok(snapshot.swapUsedPercent >= 0 && snapshot.swapUsedPercent <= 100)
   assert.ok(snapshot.rootFilesystemTotalBytes > 0)
   assert.ok(snapshot.rootFilesystemUsedPercent >= 0 && snapshot.rootFilesystemUsedPercent <= 100)
+  assert.ok((snapshot.rootFilesystemTotalInodes ?? 0) > 0)
+  assert.ok((snapshot.rootFilesystemInodeUsedPercent ?? -1) >= 0 && (snapshot.rootFilesystemInodeUsedPercent ?? 101) <= 100)
+  assert.equal(typeof snapshot.rootFilesystemReadOnly, 'boolean')
 })

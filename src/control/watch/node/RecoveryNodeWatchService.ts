@@ -2,6 +2,7 @@ import type { NodeSnapshot } from '../../../node/data/ServiceSnapshot.js'
 import { InMemoryNodeHealthIncidentRepository } from './InMemoryNodeHealthIncidentRepository.js'
 import { RecoveryNodeResourceEvaluator } from './RecoveryNodeResourceEvaluator.js'
 import type {
+  RecoveryNodeResourceViolation,
   RecoveryNodeWatchDefinition,
   RecoveryNodeWatchState,
 } from './RecoveryNodeWatchDefinition.js'
@@ -138,7 +139,7 @@ export class RecoveryNodeWatchService {
       const incident = this.incidentRepository.openOrUpdate(
         definition.nodeId,
         violations,
-        `Node resource pressure detected: ${violations.map((violation) => `${violation.metric}=${violation.value}>${violation.threshold}`).join(', ')}`,
+        `Node resource pressure detected: ${violations.map((violation) => this.describeViolation(violation)).join(', ')}`,
       )
       return {
         nodeId: definition.nodeId,
@@ -166,6 +167,12 @@ export class RecoveryNodeWatchService {
         lastError: message,
       }
     }
+  }
+
+  private describeViolation(violation: RecoveryNodeResourceViolation): string {
+    return violation.metric === 'root_filesystem_read_only'
+      ? 'root_filesystem_read_only=true; expected=false'
+      : `${violation.metric}=${violation.value}>${violation.threshold}`
   }
 
   private markStarted(definition: RecoveryNodeWatchDefinition, startedAtMs: number): void {
