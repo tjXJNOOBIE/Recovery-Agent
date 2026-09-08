@@ -1,14 +1,18 @@
 import { readFileSync } from 'node:fs'
 
+export interface RecoveryControlServiceConfig {
+  readonly id: string
+  readonly restartAllowed: boolean
+  readonly maxRestartAttempts: number
+  readonly watchEnabled: boolean
+  readonly watchIntervalSeconds: number
+}
+
 export interface RecoveryControlNodeConfig {
   readonly id: string
   readonly baseUrl: string
   readonly tokenEnvironmentVariable: string
-  readonly services: readonly {
-    readonly id: string
-    readonly restartAllowed: boolean
-    readonly maxRestartAttempts: number
-  }[]
+  readonly services: readonly RecoveryControlServiceConfig[]
 }
 
 export interface RecoveryControlConfig {
@@ -36,6 +40,8 @@ export class RecoveryControlConfigReader {
               id: this.requireString(service, 'id'),
               restartAllowed: this.requireBoolean(service, 'restartAllowed'),
               maxRestartAttempts: this.requireNonNegativeInteger(service, 'maxRestartAttempts'),
+              watchEnabled: this.optionalBoolean(service, 'watchEnabled') ?? true,
+              watchIntervalSeconds: this.optionalPositiveInteger(service, 'watchIntervalSeconds') ?? 30,
             }
           }),
         }
@@ -60,9 +66,23 @@ export class RecoveryControlConfigReader {
     return value
   }
 
+  private optionalBoolean(record: Readonly<Record<string, unknown>>, key: string): boolean | undefined {
+    const value = record[key]
+    if (value === undefined) return undefined
+    if (typeof value !== 'boolean') throw new Error(`${key} must be boolean when provided`)
+    return value
+  }
+
   private requireNonNegativeInteger(record: Readonly<Record<string, unknown>>, key: string): number {
     const value = record[key]
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) throw new Error(`${key} must be a non-negative integer`)
+    return value
+  }
+
+  private optionalPositiveInteger(record: Readonly<Record<string, unknown>>, key: string): number | undefined {
+    const value = record[key]
+    if (value === undefined) return undefined
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) throw new Error(`${key} must be a positive integer when provided`)
     return value
   }
 }

@@ -48,6 +48,8 @@ MCP host
               -> HttpNodeAgentGateway
                   -> NodeAgentHttpServer
                       -> SystemdNodeServiceRuntime
+              -> RecoveryWatchService
+                  -> configured interval -> bounded recoverService
               -> RecoveryOrchestrator
                   -> RecoveryPolicyResolver
                   -> InMemoryIncidentRepository
@@ -101,7 +103,9 @@ Control config owns the node/service policy snapshot:
         {
           "id": "payments-api",
           "restartAllowed": true,
-          "maxRestartAttempts": 2
+          "maxRestartAttempts": 2,
+          "watchEnabled": true,
+          "watchIntervalSeconds": 30
         }
       ]
     }
@@ -123,10 +127,28 @@ Current tools:
 | `service_inspect` | No | Inspect one configured service. |
 | `service_recover` | Bounded | Run policy-controlled recovery for one service. |
 | `health_sweep` | Bounded | Inspect all configured services and recover unhealthy ones within policy. |
+| `watch_list` | No | List built-in service watch configuration and latest runtime state. |
+| `watch_run` | Bounded | Force all configured service watches to execute now. |
 | `incident_list` | No | List incidents in the current control runtime. |
 | `incident_inspect` | No | Inspect one incident timeline. |
 
 This catalog represents user intentions rather than mirroring every operating-system verb.
+
+## Built-in Service Watches
+
+Each configured service receives a built-in watch by default. `watchEnabled` may disable it and `watchIntervalSeconds` controls its interval, defaulting to 30 seconds.
+
+`RecoveryWatchService` is a product lifecycle service, not a replacement generic scheduler. It owns only Recovery Agent watch cadence and short-lived watch execution state. Due watches delegate to `RecoveryControlRuntime.recoverService`, preserving one recovery path for user-triggered and automatic execution.
+
+Watch invariants:
+
+- only one timer-driven watch cycle executes at a time;
+- an explicit `watch_run` waits for any active cycle before forcing all configured watches;
+- a watch that has not reached its interval is skipped;
+- watch errors are recorded in the watch runtime state rather than terminating future cycles;
+- watch state is process-local and is not incident/audit authority.
+
+Current built-in coverage is service lifecycle health. Node resource pressure, deployment correlation, dependency health, certificate expiry, and recovery-readiness packs remain unimplemented.
 
 ## Strands Boundary
 
@@ -166,7 +188,8 @@ The current local E2E harness covers:
 - real local HTTP boundary between the control gateway and demo node runtime;
 - bearer authentication on the node boundary;
 - MCP intention routing into the deterministic control runtime;
-- simulated fleet sweep across recovery and escalation paths.
+- simulated fleet sweep across recovery and escalation paths;
+- recurring service watch due/skip behavior and forced watch execution through MCP.
 
 ## Remaining Promotion Gates
 
@@ -178,7 +201,7 @@ This document remains `FINAL_DRAFT`. The following are not yet claimed:
 - authorized model invocation through the bridge;
 - clean-directory package/npx install-and-run smoke test;
 - durable incident/audit persistence;
-- recurring watch scheduler and built-in node/deployment/dependency/certificate/readiness watch packs;
+- built-in node/deployment/dependency/certificate/recovery-readiness watch packs and semantic user-watch compilation;
 - Strands triage/investigator/planner/critic graph and typed recovery plans;
 - human approval workflow for higher-risk recovery levels;
 - outbound node enrollment, credential rotation, mutual authentication, and production remote transport;
@@ -193,6 +216,7 @@ This document remains `FINAL_DRAFT`. The following are not yet claimed:
 - Strands is an investigation/planning runtime, never the authorization boundary.
 - Node operations are typed and configured; arbitrary shell execution is not a normal capability.
 - Every mutation is followed by fresh deterministic verification.
+- Built-in service watches reuse the same bounded recovery path as user-triggered recovery.
 - Unknown or exhausted recovery paths escalate instead of looping indefinitely.
 - Demo behavior remains clearly labeled when simulated.
 - The system remains Draft until physical external/runtime evidence and accountable review are complete.

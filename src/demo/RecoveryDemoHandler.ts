@@ -4,6 +4,8 @@ import { RecoveryPolicyResolver } from '../control/policy/RecoveryPolicyResolver
 import type { ServiceRecoveryPolicy } from '../control/policy/ServiceRecoveryPolicy.js'
 import { RecoveryOrchestrator } from '../control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../control/runtime/RecoveryControlRuntime.js'
+import type { RecoveryWatchDefinition } from '../control/watch/RecoveryWatchDefinition.js'
+import { RecoveryWatchService } from '../control/watch/RecoveryWatchService.js'
 import { HttpNodeAgentGateway } from '../node/http/HttpNodeAgentGateway.js'
 import { NodeAgentHttpServer } from '../node/http/NodeAgentHttpServer.js'
 import { RecoveryMcpToolRouter } from '../mcp/RecoveryMcpToolRouter.js'
@@ -23,6 +25,7 @@ export interface RecoveryDemoResult {
   readonly before: unknown
   readonly sweep: unknown
   readonly after: unknown
+  readonly watches: unknown
   readonly incidents: unknown
 }
 
@@ -47,15 +50,23 @@ export class RecoveryDemoHandler {
       new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, new DemoRecoveryInvestigator()),
       incidents,
     )
-    const tools = new RecoveryMcpToolRouter(control)
+    const watchDefinitions: readonly RecoveryWatchDefinition[] = policies.map((policy) => ({
+      nodeId: policy.nodeId,
+      serviceId: policy.serviceId,
+      intervalMs: 30_000,
+    }))
+    const watchService = new RecoveryWatchService(control, watchDefinitions)
+    const tools = new RecoveryMcpToolRouter(control, watchService)
 
     try {
       const before = await tools.callTool('fleet_status')
-      const sweep = await tools.callTool('health_sweep')
+      const sweep = await tools.callTool('watch_run')
       const after = await tools.callTool('fleet_status')
+      const watchStates = await tools.callTool('watch_list')
       const incidentList = await tools.callTool('incident_list')
-      return { label: 'SIMULATED DEMONSTRATION', before, sweep, after, incidents: incidentList }
+      return { label: 'SIMULATED DEMONSTRATION', before, sweep, after, watches: watchStates, incidents: incidentList }
     } finally {
+      await watchService.close()
       await control.close()
       await nodeServer.close()
     }

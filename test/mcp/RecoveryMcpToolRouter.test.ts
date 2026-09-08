@@ -5,6 +5,7 @@ import { InMemoryIncidentRepository } from '../../src/control/incident/repositor
 import { RecoveryPolicyResolver } from '../../src/control/policy/RecoveryPolicyResolver.js'
 import { RecoveryOrchestrator } from '../../src/control/recovery/RecoveryOrchestrator.js'
 import { RecoveryControlRuntime } from '../../src/control/runtime/RecoveryControlRuntime.js'
+import { RecoveryWatchService } from '../../src/control/watch/RecoveryWatchService.js'
 import { DemoNodeServiceRuntime } from '../../src/demo/runtime/DemoNodeServiceRuntime.js'
 import { RecoveryMcpToolRouter } from '../../src/mcp/RecoveryMcpToolRouter.js'
 import { HttpNodeAgentGateway } from '../../src/node/http/HttpNodeAgentGateway.js'
@@ -24,14 +25,17 @@ test('routesMcpRecoveryIntentIntoDeterministicControlRuntime', async () => {
     new RecoveryOrchestrator(new RecoveryPolicyResolver(), incidents, new FakeRecoveryInvestigator()),
     incidents,
   )
-  const router = new RecoveryMcpToolRouter(control)
+  const watches = new RecoveryWatchService(control, [{ nodeId: 'node-a', serviceId: 'worker', intervalMs: 30_000 }])
+  const router = new RecoveryMcpToolRouter(control, watches)
 
   try {
     const result = await router.callTool('service_recover', { nodeId: 'node-a', serviceId: 'worker' }) as {status: string}
     assert.equal(result.status, 'recovered')
     assert.equal(control.listIncidents().length, 1)
     assert.ok(router.listTools().some((tool) => tool.name === 'health_sweep'))
+    assert.ok(router.listTools().some((tool) => tool.name === 'watch_run'))
   } finally {
+    await watches.close()
     await control.close()
     await server.close()
   }

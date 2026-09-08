@@ -8,7 +8,9 @@
         {
           "id": "payments-api",
           "restartAllowed": true,
-          "maxRestartAttempts": 2
+          "maxRestartAttempts": 2,
+          "watchEnabled": true,
+          "watchIntervalSeconds": 30
         }
       ]
     }

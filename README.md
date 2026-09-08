@@ -4,7 +4,7 @@ Recovery Agent is a control-host recovery runtime for Linux services. It keeps t
 
 **Agents for Humans track:** Professional
 
-> **Current status:** Draft E2E foundation. The simulated recovery path is runnable. Real remote-node transport, physical npm/Strands/MCP SDK validation, durable incident storage, scheduled watches, and broader adapters remain promotion gates.
+> **Current status:** Draft E2E foundation. The simulated recovery path and recurring built-in service watches are runnable. Real remote-node transport, physical npm/Strands/MCP SDK validation, durable incident storage, broader watch packs, and broader adapters remain promotion gates.
 
 ## What is implemented
 
@@ -14,6 +14,7 @@ MCP host
       -> deterministic control runtime
           -> node HTTP boundary
               -> systemd adapter
+          -> recurring service watches
           -> incident timeline
           -> bounded recovery policy
           -> verify after mutation
@@ -70,10 +71,30 @@ Current MCP tools:
 - `service_inspect`
 - `service_recover`
 - `health_sweep`
+- `watch_list`
+- `watch_run`
 - `incident_list`
 - `incident_inspect`
 
 `service_recover` and `health_sweep` are bounded by configured policy. The AI cannot bypass the recovery budget or call an unrestricted executor.
+
+## Built-in service watches
+
+Configured services are watched by default when the MCP control host runs. Each service defaults to a 30-second interval and can be tuned or disabled independently:
+
+```json
+{
+  "id": "payments-api",
+  "restartAllowed": true,
+  "maxRestartAttempts": 2,
+  "watchEnabled": true,
+  "watchIntervalSeconds": 30
+}
+```
+
+The watch service is deliberately product-specific rather than a second general scheduling framework. A due watch calls the same `recoverService` path used by MCP, so health checks, recovery budgets, Strands escalation, and verification cannot quietly drift into separate behavior. Overlapping watch cycles are serialized and watch failures are recorded in runtime watch state instead of killing the recurring loop.
+
+`watch_list` exposes the latest state for each configured watch. `watch_run` forces all configured watches to run immediately through the bounded recovery path.
 
 ## Strands investigation
 

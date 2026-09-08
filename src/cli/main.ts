@@ -7,6 +7,8 @@ import { RecoveryAgentRuntimeConfigBuilder } from '../agent/config/RecoveryAgent
 import { RecoveryControlConfigReader } from '../config/RecoveryControlConfig.js'
 import { RecoveryNodeConfigReader } from '../config/RecoveryNodeConfig.js'
 import { RecoveryControlRuntimeBuilder } from '../control/runtime/RecoveryControlRuntimeBuilder.js'
+import { RecoveryWatchDefinitionBuilder } from '../control/watch/RecoveryWatchDefinitionBuilder.js'
+import { RecoveryWatchService } from '../control/watch/RecoveryWatchService.js'
 import { RecoveryDemoHandler } from '../demo/RecoveryDemoHandler.js'
 import { RecoveryMcpToolRouter } from '../mcp/RecoveryMcpToolRouter.js'
 import { RecoveryMcpServer } from '../mcp/RecoveryMcpServer.js'
@@ -55,9 +57,12 @@ async function main(): Promise<void> {
 
   if (command === 'mcp') {
     const configPath = requireArgument(args, 1, 'control config path')
+    const config = new RecoveryControlConfigReader().read(configPath)
     const bootstrap = new StrandsAgentRuntimeBootstrap()
-    const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env).build(new RecoveryControlConfigReader().read(configPath))
-    const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control))
+    const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env).build(config)
+    const watchService = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
+    const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watchService))
+    watchService.start()
     mcpServer.serve()
 
     await new Promise<void>((resolve, reject) => {
@@ -66,6 +71,7 @@ async function main(): Promise<void> {
         if (closing) return
         closing = true
         void mcpServer.close()
+          .then(() => watchService.close())
           .then(() => control.close())
           .then(resolve, reject)
       }

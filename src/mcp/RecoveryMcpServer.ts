@@ -88,6 +88,26 @@ export class RecoveryMcpServer {
     )
 
     server.registerTool(
+      'watch_list',
+      {
+        description: 'List configured built-in recovery watches and their latest runtime state.',
+        inputSchema: emptyInputSchema,
+        annotations: { readOnlyHint: true },
+      },
+      async () => this.toolResult(await this.toolRouter.callTool('watch_list')),
+    )
+
+    server.registerTool(
+      'watch_run',
+      {
+        description: 'Run every configured recovery watch immediately through bounded recovery policy.',
+        inputSchema: emptyInputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      async () => this.toolResult(await this.toolRouter.callTool('watch_run')),
+    )
+
+    server.registerTool(
       'incident_list',
       {
         description: 'List recovery incidents from this control runtime.',
