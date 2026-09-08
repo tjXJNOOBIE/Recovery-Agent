@@ -4,14 +4,14 @@
 > **Hackathon track:** Professional  
 > **Shared agent runtime:** `@tjxjnoobie/custom-strands-bridge`  
 > **MCP server runtime:** `@modelcontextprotocol/server` v2  
-> **Owns:** Recovery Agent product policy, node/control protocol, deterministic recovery, built-in watches, incident/plan lifecycle, MCP exposure, and human approval boundary  
+> **Owns:** Recovery Agent product policy, node/control protocol, deterministic recovery, built-in and semantic watches, incident/plan lifecycle, MCP exposure, and human approval boundary  
 > **Must not define:** a second Strands framework, arbitrary remote shell execution, generic replacement infrastructure for Tavall-owned systems, or unverified production capabilities
 
 ## Product Contract
 
 Recovery Agent keeps AI execution on a control host while small node agents expose bounded deterministic operations on machines that run services.
 
-> **Deterministic software observes, authorizes, budgets, orders, executes, and verifies. Strands interprets, investigates, plans, critiques, and explains.**
+> **Deterministic software observes, authorizes, budgets, orders, executes, and verifies. Strands interprets, investigates, plans, critiques, compiles bounded intent, and explains.**
 
 AI is never the mutation or authorization boundary.
 
@@ -39,6 +39,10 @@ MCP host
               -> deployment correlation watch
               -> service recovery watch
               -> readiness watch
+          -> semantic service-watch compiler
+              -> Strands invoked once on create/update
+              -> strict configured target + interval proposal
+              -> deterministic watch override thereafter
           -> RecoveryOrchestrator
               -> rolling restart budget
               -> incident repository
@@ -69,17 +73,10 @@ Recovery Agent owns product-specific state and behavior:
 - typed recovery plans and approval lifecycle;
 - deterministic verification;
 - product-specific Strands prompts/parsers/orchestration;
+- semantic service-watch definitions and override behavior;
 - demo scenarios and simulation labeling.
 
-Production node operations are narrow. The normal surface contains no arbitrary shell executor. Public service IDs map to configured systemd units. Remote/model callers cannot supply:
-
-- unit names;
-- shell commands/arguments;
-- health URLs or ports;
-- TLS certificate targets;
-- deployment marker paths.
-
-Those targets are local node configuration.
+Production node operations are narrow. The normal surface contains no arbitrary shell executor. Public service IDs map to configured systemd units. Remote/model callers cannot supply unit names, shell commands/arguments, health URLs or ports, TLS certificate targets, or deployment marker paths.
 
 ## Node Boundary
 
@@ -96,58 +93,19 @@ The node server defaults to loopback and uses a per-node Bearer secret from an e
 
 ### Service health
 
-A configured service has one fixed systemd unit and optional fixed application checks.
-
-Supported application checks:
-
-- HTTP(S) GET with expected status set and bounded timeout;
-- TCP connection to fixed host/port with bounded timeout.
-
-HTTP URL credentials are rejected. Callers cannot provide probe targets at operation time.
-
-Health composition:
-
-1. inspect systemd lifecycle;
-2. if unit is not running, skip application probes and report unhealthy lifecycle;
-3. if running, evaluate every configured application probe;
-4. all probes must pass for `ServiceSnapshot.healthy=true`;
-5. attach individual probe evidence to the snapshot.
-
-A process being present is therefore not equivalent to a working application.
+A configured service has one fixed systemd unit and optional fixed HTTP(S)/TCP application checks. HTTP URL credentials are rejected. Probe hosts/ports/URLs are node configuration, not operation arguments. A running systemd unit with failed app checks remains unhealthy.
 
 ### Deployment evidence
 
-A service may configure `deploymentMarkerFile`.
-
-`FileDeploymentEvidenceProbe` reads only bounded marker bytes plus file metadata and produces a SHA-256 marker. Exposed evidence contains marker hash/timestamp only; marker contents and path are not returned.
-
-Deployment evidence is informational and **does not directly change service health**.
+A service may configure `deploymentMarkerFile`. Recovery Agent exposes only bounded SHA-256/timestamp evidence, not marker contents or path. Deployment evidence is informational and does not directly change service health.
 
 ### Linux node evidence
 
-`LinuxNodeResourceProbe` reads without shell execution:
-
-- `/proc/meminfo` for memory/swap;
-- OS APIs for CPU/load/uptime;
-- `statfs` for root filesystem bytes/inodes;
-- `/proc/self/mountinfo` for root read-only state.
-
-It does not write a probe file.
+`LinuxNodeResourceProbe` reads without shell execution from `/proc/meminfo`, OS APIs, `statfs`, and `/proc/self/mountinfo`. Evidence includes memory, swap, load/CPU, uptime, root filesystem bytes/inodes, and root read-only state.
 
 ### Certificate evidence
 
-Configured TLS targets contain fixed ID, host, port, SNI server name, timeout, and warning/critical thresholds.
-
-The TLS probe observes:
-
-- reachability;
-- trust/authorization state;
-- certificate validity period and days remaining;
-- subject / issuer;
-- SHA-256 fingerprint;
-- authorization and network errors.
-
-The probe may complete a TLS handshake with certificate verification disabled **only to observe the broken peer certificate**. `authorized=false` remains explicit evidence; the connection is never promoted to trusted state.
+Configured TLS targets contain fixed ID/host/port/SNI/timeout/thresholds. Evidence includes reachability, trust/authorization state, validity window/days remaining, subject, issuer, fingerprint, and errors. Invalid certificates may be observed with verification disabled only so their evidence can be inspected; `authorized=false` remains explicit and is never treated as trusted.
 
 ## Deterministic Recovery Flow
 
@@ -179,317 +137,208 @@ recover node/service
       -> accepted restart_service -> target-bound pending_approval plan
 ```
 
-Mutation response is never proof of recovery. A fresh inspection after mutation is mandatory.
+Mutation response is never proof of recovery. Fresh inspection after mutation is mandatory.
 
 ## Rolling Automatic Restart Budget
 
-`maxRestartAttempts` is a rolling automatic ceiling, not a new allowance on every watch invocation.
+`maxRestartAttempts` is a rolling automatic ceiling, not a new allowance on every watch invocation. The default budget window is 600 seconds. Every actual automatic restart consumes one slot, including successful restarts. Exhausted budget executes zero restart before investigation/escalation.
 
-Default budget window: **600 seconds**.
-
-Rules:
-
-- every actual automatic restart consumes one slot;
-- successful restarts still consume budget;
-- attempts are scoped per node/service;
-- expired attempts age out of the window;
-- the slot is consumed before issuing mutation;
-- exhausted budget executes zero restart and proceeds to investigation/escalation.
-
-The ledger is process-local today. Durable budget authority remains a production promotion gate.
-
-Human-approved elevated execution is outside the automatic restart ledger, but still requires approval, dependency re-check, one typed action, and fresh verification.
+The automatic ledger is process-local today. Durable budget authority remains a production promotion gate.
 
 ## Dependency Gate
 
-Services may declare same-node or cross-node dependencies. Configuration rejects:
-
-- unknown dependency targets;
-- self-dependencies;
-- duplicates;
-- dependency cycles.
-
-An unhealthy or unreachable dependency blocks automatic mutation of the dependent. `health_sweep` orders dependencies before dependents. Approved elevated execution re-checks dependencies immediately before mutation; human approval does not waive prerequisite health.
+Services may declare same-node or cross-node dependencies. Configuration rejects unknown targets, self-dependencies, duplicates, and cycles. Unhealthy/unreachable dependencies block dependent mutation, `health_sweep` orders prerequisites first, and approved execution re-checks dependency health immediately before mutation.
 
 ## Suppression and Concurrency Barriers
 
-### Same-target operation barrier
+- Same-target concurrent recovery shares one active operation.
+- `pending_approval` suppresses additional automatic mutation/incidents/plans until decision or verified external recovery.
+- `human_required` suppresses repeated automatic mutation and Strands reinvocation until verified external recovery.
+- `dependency_blocked` suppresses dependent mutation until prerequisites are freshly healthy.
 
-Concurrent recovery requests for one node/service share the same active operation promise. Different targets remain independent.
+## Partial-Fleet Inspection
 
-### Pending-plan barrier
+`fleet_status` isolates node failures. Reachable nodes remain inspectable/recoverable when another gateway is unreachable, and explicit unreachable-node evidence is returned.
 
-A `pending_approval` plan suppresses additional automatic mutation, incidents, and duplicate plans. Re-entry performs fresh inspection only. Verified external recovery supersedes the unexecuted plan and resolves the incident.
+## Built-in Watch Surface
 
-### Human-required barrier
-
-Once automation hands an incident to a human without a plan, subsequent watch/manual recovery remains read-only while unhealthy. Budget is not spent and Strands is not reinvoked. External recovery resolves the incident.
-
-### Dependency-blocked barrier
-
-A dependency-blocked dependent remains mutation-free until prerequisite health is freshly verified.
-
-## Partial-Fleet Behavior
-
-`fleet_status` isolates gateway failures. One unreachable node does not erase reachable fleet state or stop bounded recovery elsewhere. Explicit `unreachableNodes` evidence is returned.
-
-## Built-in Watches
-
-`RecoveryWatchCoordinator` serializes product watch cycles. Current order is:
+Combined automatic order is:
 
 ```text
-node -> certificate -> deployment -> service -> readiness
+node -> certificate -> deployment -> service recovery -> readiness
 ```
-
-This ordering deliberately records deployment state before service recovery mutates workload state.
 
 ### Linux Node Watch
 
-Default limits:
+Read-only evidence covers memory, swap, root filesystem byte/inode pressure, root read-only state, normalized one-minute load, uptime, and midpoint-based node clock drift. Default limits are 92% memory, 80% swap, 90% root bytes, 90% root inodes, 2.0 load/CPU, writable root, and <=30 seconds drift.
 
-```text
-memory used                 > 92%
-swap used                   > 80%
-root filesystem bytes used  > 90%
-root filesystem inodes used > 90%
-1m load average / CPU       > 2.0
-root filesystem read-only   must be false
-node clock drift            > 30 seconds
-```
-
-Clock drift uses the midpoint of the node inspection request and records request round-trip duration separately. Node resource/filesystem/clock watch is observation/escalation only and does not reboot, drain, delete, or rewrite system time.
-
-Node watch states include `never_run`, `healthy`, `degraded`, `unreachable`, and `unsupported`. Process-local node-health incidents open/update on degraded/unreachable evidence and resolve on fresh healthy evidence.
+The watch can open/update/resolve node-health incidents but cannot reboot, drain, destroy, or set system time.
 
 ### Certificate Watch
 
-Default schedule: every **6 hours**.
-
-Default certificate thresholds:
-
-```text
-warning  <= 30 days remaining
-critical <= 7 days remaining
-critical on TLS authorization failure
-```
-
-Certificate warnings have their own incident lifecycle. They do not spend service restart budget or trigger blind service restart.
+Fixed TLS targets are inspected every six hours by default. Warning begins at <=30 days remaining; critical at <=7 days or when TLS authorization fails. Certificate issues have their own incidents and never spend service restart budget.
 
 ### Deployment Watch
 
-The first marker is a baseline, not automatically a deployment event. A later hash change starts a **10-minute stabilization window** with a **5-second stabilization cadence**.
-
-States include baseline/stabilizing/regressed/stable/unavailable. If the new marker is accompanied by unhealthy service evidence, a deployment regression incident opens before normal service recovery runs. Healthy evidence through the stabilization window resolves the deployment incident.
-
-Deployment evidence does not authorize rollback or any mutation by itself.
+A deployment marker change starts a 10-minute stabilization window with five-second cadence. A changed marker plus unhealthy service evidence opens deployment-regression evidence before the service-recovery watch mutates the target.
 
 ### Service Watch
 
-Configured services default to a 30-second watch interval. A watch delegates to the same `recoverService` path used by MCP and therefore inherits all dependencies, budgets, suppression, Strands escalation, and verification rules.
+Configured service watches delegate to the same `recoverService` implementation used by MCP, inheriting systemd/app health, dependencies, rolling budgets, suppression, Strands escalation, and fresh verification.
 
-### Recovery Readiness Watch
+### Recovery Readiness
 
-Default schedule: every **5 minutes**.
+`recovery_readiness` classifies each target as `ready`, `limited`, `blocked`, or `unreachable` using the same live policy, rolling budget, dependencies, plans, and incidents used by execution. The built-in readiness watch defaults to five minutes and is read-only.
 
-Recovery Readiness reports whether each configured service is:
+## Semantic Service Watches
 
-- `ready`;
-- `limited`;
-- `blocked`;
-- `unreachable`.
+Semantic watches implement the product contract:
 
-It reads current health, restart policy, the same live rolling budget, dependencies, plans, and human-owned incidents. Readiness is read-only: it opens no recovery incident, consumes no budget, and performs no mutation.
+```text
+natural-language operator request
+  -> Strands compilation once
+  -> strict semantic proposal
+      { nodeId, serviceId, intervalSeconds, rationale }
+  -> deterministic configured-target validation
+  -> RecoveryWatchService interval override
+  -> normal deterministic recoverService() on every due run
+```
 
-A healthy workload may be `limited` if its recovery budget is exhausted or restart is not allowed.
+Rules:
 
-## Strands Investigation Graph
+- compilation happens only on `watch_create` and `watch_update`;
+- recurring execution and `watch_run` never invoke the semantic compiler;
+- node/service target must already exist in control configuration;
+- interval must be an integer from 10 through 86,400 seconds;
+- compiler output may contain only `nodeId`, `serviceId`, `intervalSeconds`, and `rationale`;
+- URLs, ports, commands, credentials, conditions, recovery actions, new infrastructure, or arbitrary targets are not accepted;
+- at most one semantic override exists per target;
+- update cannot silently retarget an existing watch;
+- remove restores the configured built-in watch interval when one exists;
+- remove deletes the dynamic watch entirely when the service had no built-in watch.
 
-Recovery Agent imports `@tjxjnoobie/custom-strands-bridge`, not the Strands SDK directly.
+Semantic watch definitions are process-local in the E2E foundation. A control-host restart loses them. Durable semantic-watch authority, migration, retention, and recovery remain production promotion gates and must use an appropriate owning persistence boundary rather than inventing a parallel general database layer in this product.
 
-Current investigation orchestration behind the bridge contract:
+## Strands Reasoning Boundary
+
+Recovery Agent consumes `@tjxjnoobie/custom-strands-bridge`, not `@strands-agents/sdk` directly.
+
+After deterministic recovery exhaustion:
 
 ```text
 strict triage
   -> 1..3 unique specialist domains
-      service
-      application
-      dependency
-      deployment
-      node
-      network
-  -> evidence synthesis
+      service | application | dependency | deployment | node | network
+  -> synthesis
+  -> strict planner {action, rationale}
+  -> veto-only critic
+  -> deterministic plan creation only if accepted
 ```
 
-Triage JSON contains only severity, domains, and hypothesis. Specialist fan-out is capped at three. Malformed structured triage fails soft to one service specialist so model formatting cannot take the deterministic escalation path offline.
-
-All specialists are read-only and explicitly forbidden from executing or claiming mutation.
-
-## Strict Planner and Veto-Only Critic
-
-The planner may return exactly:
-
-```json
-{"action":"restart_service","rationale":"..."}
-```
-
-or `action: "none"`.
-
-It cannot supply target IDs, shell commands, credentials, or arbitrary arguments. Target identity comes from the deterministic incident.
-
-When the planner proposes `restart_service`, a separate critic reviews the already-bounded proposal. Critic output is exactly:
-
-```json
-{"accepted":true,"concerns":[]}
-```
-
-The critic can **only accept or reject**. It cannot invent a new action. Rejection creates no `RecoveryPlan` and escalates to `human_required`. Critic parse/provider failure also fails closed.
+Malformed triage safely falls back to one service specialist. Specialist fan-out is capped at three. The planner may propose only `restart_service` or `none`; model output cannot choose another target or provide commands/credentials. The critic can accept/reject the existing bounded proposal and cannot expand the action catalog. Critic rejection/failure creates no plan and fails closed to human intervention.
 
 ## Human Approval Boundary
 
-Approval/rejection are deliberately absent from model-facing MCP.
-
-When `RECOVERY_APPROVAL_TOKEN` is configured, the control host creates an owner-only Unix socket with mode `0600`.
+When `RECOVERY_APPROVAL_TOKEN` is configured, the control process creates a per-user local Unix approval socket with mode `0600`.
 
 ```bash
 recovery-agent approve <plan-id>
 recovery-agent reject <plan-id> 'reason'
 ```
 
-Wrong-token requests perform no mutation. A valid approval executes exactly one already-target-bound typed action, after a fresh dependency re-check, then verifies health again.
+Approval/rejection are absent from model-facing MCP. Wrong-token requests execute zero mutation. Valid approval re-checks dependencies, executes exactly one already-bound typed action, and performs fresh service/application verification.
 
-This socket/token mechanism is the E2E foundation, not final production approver identity. Accountable approver identity, attribution, expiry/revocation, and durable audit remain promotion gates.
+## Incident Postmortems
 
-## Resolved-Incident Postmortems
+`incident_postmortem` is read-only and accepts only an incident already marked `resolved`. Unresolved incidents are rejected before Strands runtime creation. Only plans belonging to that incident are included as evidence.
 
-`incident_postmortem` is a read-only MCP operation.
+The strict result contains summary, root cause, contributing factors, recovery, prevention, and confidence. Unsupported causality must remain `unknown` rather than being invented.
 
-Rules:
+## MCP Surface
 
-1. deterministic control state must show the incident is `resolved`;
-2. unresolved incidents are rejected before a Strands runtime is created;
-3. only recovery plans whose `incidentId` matches are supplied as evidence;
-4. incident identity is deterministic, not model output;
-5. model output is strict typed JSON containing summary, root cause, contributing factors, recovery, prevention, and confidence;
-6. the prompt requires `rootCause="unknown"` when causality is not established and forbids invented people, deployments, actions, or outcomes.
-
-Postmortem generation does not mutate incident state or infrastructure.
-
-## Model-Facing MCP Surface
-
-Current intention-level catalog:
-
-| Tool | Mutation | Purpose |
-| --- | --- | --- |
-| `fleet_status` | No | Partial-fleet node/service/resource state. |
-| `recovery_readiness` | No | Current recoverability and blockers. |
-| `node_inspect` | No | Inspect one node. |
-| `service_inspect` | No | Inspect one service + app/deployment evidence. |
-| `service_recover` | Bounded | Deterministic policy-controlled recovery. |
-| `health_sweep` | Bounded | Dependency-ordered recovery on reachable fleet. |
-| `watch_list` | No | Combined watch states/incidents. |
-| `watch_run` | Bounded | Force deterministic built-in watch passes. |
-| `incident_list` | No | List service recovery incidents. |
-| `incident_inspect` | No | Inspect one incident timeline. |
-| `incident_postmortem` | No | Typed postmortem for one resolved incident. |
-| `recovery_plan_list` | No | List typed plans. |
-| `recovery_plan_inspect` | No | Inspect one typed plan. |
-
-No approval tool exists in the model-facing catalog.
-
-## Incident and Runtime State
-
-Current service incident statuses include:
+Current model-facing tools:
 
 ```text
-open
-recovering
-dependency_blocked
-approval_required
-human_required
-resolved
+fleet_status
+recovery_readiness
+node_inspect
+service_inspect
+service_recover
+health_sweep
+watch_list
+watch_run
+watch_create
+watch_update
+watch_remove
+incident_list
+incident_inspect
+incident_postmortem
+recovery_plan_list
+recovery_plan_inspect
 ```
 
-Plan statuses include:
+Approval/rejection are intentionally absent.
 
-```text
-pending_approval
-approved
-executed
-rejected
-failed
-superseded
-```
+## Current State Durability
 
-Current incident/plan/budget/watch/node-health/certificate/deployment state is process-local and is **not durable authority**. Durable persistence, retention, migration, restart recovery, and audit semantics remain a production gate.
+Current service incidents, recovery plans, node-health incidents, certificate incidents, deployment incidents, semantic-watch definitions, automatic restart budgets, and watch runtime state are process-local. They are explicitly not durable authority.
+
+Durable authority requires an owning persistence boundary with restart recovery, migration/versioning, retention/cleanup, and audit semantics.
 
 ## Demo Truthfulness
 
-`recovery-agent demo` remains explicitly labeled `SIMULATED DEMONSTRATION`. Fake investigation/planning and simulated host/resource evidence are never presented as physical production evidence. Elevated plans are not auto-approved.
+`recovery-agent demo` remains visibly labeled `SIMULATED DEMONSTRATION`. Simulated model/host behavior is not presented as physical product evidence and elevated plans are never auto-approved.
 
 ## Validation Evidence
 
-Earlier branch foundation validation completed:
+Earlier foundation validation completed on Node 22.16.0 / TypeScript 5.8.3 with 30/30 branch delegate/E2E tests, strict TypeScript, production build, and package dry-run before later slices.
 
-- Node `v22.16.0`;
-- TypeScript `v5.8.3`;
-- 30/30 delegate/E2E tests;
-- strict TypeScript check;
-- production build;
-- package dry-run with tests excluded.
+Later focused/dependency-free/live validation covers rolling budgets, dependency topology/blocking/order, partial-fleet isolation, Linux resources/filesystem/clock, HTTP/TCP app probes, certificate evidence, deployment correlation, bounded triage/specialists, critic veto, and resolved-only postmortems.
 
-Later focused/dependency-free and live harness validation covers:
+Semantic-watch delegate coverage now includes:
 
-- rolling restart-window exhaustion/expiry and flapping prevention;
-- dependency graph validation, blocking, ordering, and approved-action re-check;
-- partial-fleet isolation;
-- memory/swap/disk/inode/load/read-only Linux evidence;
-- midpoint clock-drift detection and recovery;
-- node-health incident lifecycle;
-- live HTTP expected-status and TCP app checks;
-- systemd + app-probe health composition;
-- TLS expiry/trust observation using a generated self-signed certificate;
-- certificate warning/critical/unreachable lifecycle;
-- deployment marker content non-disclosure and change detection;
-- deployment baseline/regression/stabilization/stable lifecycle;
-- bounded Strands triage/specialist routing and malformed-triage fallback;
-- veto-only critic shape and zero-plan behavior on rejection;
-- strict postmortem parsing, resolved-only precondition, runtime cleanup, and incident-plan scoping.
+- strict configured-target parser and extra-field rejection;
+- 10s..24h interval bounds;
+- Strands compile success/failure runtime cleanup;
+- compile-once followed by deterministic recurring execution;
+- no compiler call from `watch_run`;
+- built-in interval restoration on semantic removal;
+- dynamic-only watch removal when no baseline exists;
+- update retarget rejection;
+- MCP create/update/remove/list lifecycle.
 
-The isolated execution environment cannot currently resolve external package/model endpoints. Therefore the newest branch **does not claim** a fresh complete `npm install`, full latest-branch `npm run check`, physical MCP Inspector run, physical Strands SDK/model invocation, or clean-directory `npx` smoke test.
+A full latest-head networked `npm install`, latest-head `npm run check`, physical MCP Inspector run, physical Strands provider invocation, and clean-directory `npx` smoke are still intentionally unclaimed because this isolated execution environment cannot resolve the required external registries/model endpoints.
 
 ## Remaining Promotion Gates
 
-This document remains `FINAL_DRAFT` until these gates are satisfied:
+This document remains `FINAL_DRAFT`. Still required:
 
 - networked dependency install and generated lockfile;
-- physical official MCP SDK + Inspector/current-host validation;
-- physical Strands runtime/provider + authorized real-model validation through the shared bridge;
-- clean-directory package / `npx` install-and-run smoke;
-- durable incident/plan/audit/restart-budget/node/certificate/deployment authority;
-- semantic user-created watch compilation;
-- accountable production approval identity, attribution, expiry/revocation, and durable audit;
+- physical official MCP SDK / Inspector / current-host validation;
+- physical Strands runtime/provider and authorized real-model validation through the bridge;
+- clean package / `npx` install-and-run smoke;
+- durable incident/plan/audit/restart-budget/node/certificate/deployment/semantic-watch authority;
+- production identity-aware approval attribution, expiry/revocation, and durable audit;
 - outbound node enrollment, mTLS, credential rotation, and production remote transport;
 - Docker/Kubernetes/network/database/Minecraft adapters;
 - typed recovery actions beyond systemd restart, including rollback/failover/drain/quarantine/reboot;
-- physical demo evidence showing authorized action -> execution -> resulting state on a disposable real service.
+- physical authorized action -> execution -> resulting-state demo evidence.
 
 ## Final Invariants
 
 - AI does not run on production nodes.
-- Arbitrary shell execution is not a normal node capability.
-- Callers cannot supply infrastructure/probe/certificate/deployment targets at operation time.
-- Deterministic code owns target binding, policy, dependencies, budgets, authorization, mutation, and verification.
-- A process being active is not sufficient application health when probes exist.
+- Deterministic code owns health, dependencies, ordering, budgets, mutation, target binding, approval verification, and fresh verification.
+- Process existence is not sufficient application health when probes are configured.
+- Operation callers cannot choose node-local systemd units/probe targets/TLS targets/deployment marker paths.
 - One unreachable node does not erase the reachable fleet.
-- A dependency failure does not trigger blind downstream restart.
-- A flapping service does not receive infinite fresh restart budget.
-- Node pressure, read-only filesystem, clock drift, certificate problems, and deployment correlation are observed before destructive action is considered.
-- Same-target recovery is coalesced.
-- Pending approval and human intervention stop automatic retry loops.
-- Strands specialist fan-out is bounded.
-- Planner output is action-catalog bounded and cannot retarget.
-- Critic may veto but cannot expand the action catalog.
+- Node pressure, filesystem issues, clock drift, and certificate issues are observed/escalated rather than converted directly into destructive actions.
+- A dependency failure does not trigger blind downstream restarts.
+- A flapping service does not receive infinite automatic restarts.
+- Same-target concurrent recovery is coalesced.
+- Pending approval and human escalation suppress automatic retry loops.
+- Semantic intent is compiled once; recurring execution is deterministic and bounded to configured targets.
+- Model plans cannot choose targets.
 - Model-facing MCP cannot approve elevated plans.
-- Postmortems require resolved deterministic incident state and remain read-only.
+- Arbitrary shell execution is not a normal capability.
 - Demo simulation remains explicitly labeled.
-- Production claims remain Draft until physical runtime evidence and accountable review are complete.
+- The product remains Draft until physical runtime evidence and accountable review are complete.
