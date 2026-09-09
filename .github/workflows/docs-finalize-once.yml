@@ -1,0 +1,70 @@
+name: One-shot final transport docs reconciliation
+
+on:
+  push:
+    branches:
+      - working/secure-node-transport-lifecycle
+    paths:
+      - .github/workflows/docs-finalize-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: working/secure-node-transport-lifecycle
+
+      - name: Finalize owning design evidence
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('docs/recovery-agent/RECOVERY_AGENT_FINAL_DRAFT.md')
+          text = path.read_text()
+
+          misplaced = '- Recovery Agent owns its product-specific outbound node transport, node/control identity binding, reconnect policy, and credential-rotation contract; PKI issuance outside Recovery remains an operator/infrastructure responsibility.\n'
+          if misplaced not in text:
+              raise SystemExit('expected misplaced ownership bullet not found')
+          text = text.replace(misplaced, '', 1)
+
+          owner_anchor = '- product-specific Java durable-state authority and its typed stdio protocol;\n'
+          owner_line = '- product-specific outbound node transport, node/control identity binding, reconnect policy, and credential-rotation contract; PKI issuance outside Recovery remains an operator/infrastructure responsibility.\n'
+          if owner_line not in text:
+              if owner_anchor not in text:
+                  raise SystemExit('Recovery ownership anchor not found')
+              text = text.replace(owner_anchor, owner_anchor + owner_line, 1)
+
+          validation_heading = '## Validation Requirements and Current Evidence\n\n'
+          evidence = (
+              'Production outbound-mTLS lifecycle evidence was physically validated on head '
+              '`604d4ede5a4e60eac78c4e58d6346599be72eb3b`. GitHub runs '
+              '`34413847564` (Secure transport validation), `34413847601` (Recovery validation), '
+              'and `34413847546` (Fallback validation) all completed successfully. The secure '
+              'transport run generated a CA, control certificate, original node certificate, and '
+              'rotated node certificate, then passed the strict Node 22 check/build/package path '
+              'with 160/160 tests, including deterministic recovery through the session gateway, '
+              'forced session loss, credential-file rotation/reconnect, fingerprint-overlap '
+              'acceptance, retired-credential fail-closed behavior, and private-key file safety checks.\n\n'
+          )
+          if evidence not in text:
+              if validation_heading not in text:
+                  raise SystemExit('validation heading not found')
+              text = text.replace(validation_heading, validation_heading + evidence, 1)
+
+          path.write_text(text)
+
+      - name: Commit docs and remove helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Recovery Agent Docs Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/docs-finalize-once.yml
+          git add docs/recovery-agent/RECOVERY_AGENT_FINAL_DRAFT.md
+          git diff --cached --check
+          git commit -m 'Docs: finalize production transport ownership and evidence'
+          git push origin HEAD:working/secure-node-transport-lifecycle
