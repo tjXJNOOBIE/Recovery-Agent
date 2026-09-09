@@ -24,6 +24,8 @@ The current durable snapshot envelope is schema version 2. It contains:
 
 Legacy schema-v1 snapshots remain readable. The authority normalizes v1 to safe schema-v2 defaults and emits/commits schema v2 for new durable state. Existing audit history remains append-only: an accepted commit cannot remove or rewrite an existing audit entry.
 
+Recovery's optional `durableRetention` policy is applied by the TypeScript control-state coordinator **before** a candidate snapshot reaches the authority. The authority itself remains a strict revisioned snapshot persistence boundary and does not invent product retention rules. Eligible resolved/terminal incident and watch history may therefore be omitted from later committed snapshots, while audit history is never pruned. This preserves the authority's immutable audit-prefix guarantee.
+
 Scheduler pulse bookkeeping is intentionally not durable domain state. Routine due-run or timer timestamps are excluded so a watch firing without a causal state change does not create meaningless database writes.
 
 Configuration is environment-only:
