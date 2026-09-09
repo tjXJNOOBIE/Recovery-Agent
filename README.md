@@ -4,7 +4,7 @@ Recovery Agent is a control-host recovery runtime for Linux services. AI stays o
 
 **Agents for Humans track:** Professional
 
-> **Current status:** Draft E2E foundation. Deterministic service recovery, application probes, Linux/node/certificate/deployment watches, Recovery Readiness, semantic service watches, dependency-aware rolling recovery budgets, bounded Strands investigation/planning/critic/postmortem roles, accountable local operator principals, restart-safe schema-v2 control-state durability, opt-in terminal-history retention, and packaged control-host installation are implemented. GitHub fallback validation physically exercises the Node 22 product, Java 25 state authority, PostgreSQL 17 durability, a clean npm consumer install, bundled authority discovery, installed MCP startup, and the labeled demo. Production remote transport, authorized real-model Recovery validation, broader production actions/adapters, and current-host/Inspector acceptance remain promotion gates.
+> **Current status:** E2E Recovery runtime with durable control state and production outbound mTLS node transport. Deterministic recovery, application probes, Linux/node/certificate/deployment watches, Recovery Readiness, semantic watches, dependency-aware rolling budgets, bounded Strands roles, accountable local operator principals, restart-safe schema-v2 durability, terminal-history retention, packaged control-host installation, TLS 1.3 mutual authentication, node/control certificate pinning, bounded reconnect, and credential-file rotation are implemented. GitHub validation physically exercises Node 22, Java 25, PostgreSQL 17, packaged installation, and real generated-certificate transport. Authorized real-model Recovery validation, broader production actions/adapters, and current-host/Inspector acceptance remain promotion gates.
 
 ## Runtime shape
 
@@ -15,7 +15,9 @@ MCP host
           -> fleet inspection + Recovery Readiness
           -> dependency gate + rolling restart budget
           -> write-ahead durability barrier
-          -> typed node HTTP gateways
+          -> typed node gateways
+              -> production: outbound TLS 1.3 session gateways
+              -> compatibility/demo: loopback bearer HTTP only
               -> fixed systemd service mappings
               -> fixed HTTP/TCP application probes
               -> Linux resource/filesystem evidence
@@ -75,20 +77,20 @@ The demo starts an ephemeral loopback node and drives the same HTTP gateway, con
 ## Node agent
 
 ```bash
-export RECOVERY_NODE_TOKEN_EAST_01='replace-with-a-long-random-secret'
 recovery-agent node ./node.json
 ```
+
+Production node configuration uses `transport.mode = "outbound_tls"`, file-backed certificate/private-key/CA paths, an expected control-host certificate fingerprint allowlist, and bounded reconnect settings. The node initiates the connection; it does not expose a production Recovery listener. Private keys must be regular files and, on POSIX systems, must be owned by the Recovery process user with no group/other permissions.
 
 Public service IDs map to configured systemd units. Remote/model callers cannot supply unit names, shell commands, application-health URLs or ports, TLS targets, or deployment marker paths.
 
 Configured service health can combine systemd lifecycle with fixed HTTP/TCP probes. A running unit with a failed configured application probe remains unhealthy. Linux node evidence is collected without shell execution from `/proc`, Node OS APIs, `statfs`, and mount information.
 
-The node HTTP transport currently defaults to loopback. Public-network production use is **not** claimed until outbound enrollment, mTLS, credential rotation, and production remote transport are implemented.
+Bearer HTTP exists only as `loopback_http` compatibility for local development and the explicitly simulated demo. Non-loopback plaintext configuration is rejected. Production uses outbound TLS 1.3 mutual authentication. Node credentials are re-read before every reconnect attempt, so rotation is performed by overlapping allowed fingerprints, installing replacement files, reconnecting, verifying the new identity, and then retiring the old fingerprint.
 
 ## Control host
 
 ```bash
-export RECOVERY_NODE_TOKEN_EAST_01='replace-with-the-same-secret'
 export RECOVERY_STATE_JDBC_URL='jdbc:postgresql://127.0.0.1:5432/recovery'
 export RECOVERY_STATE_DB_USERNAME='recovery'
 export RECOVERY_STATE_DB_PASSWORD='replace-me'
@@ -115,6 +117,16 @@ Current model-facing tools:
 - `incident_postmortem`
 - `recovery_plan_list`
 - `recovery_plan_inspect`
+
+## Production node transport
+
+Production nodes initiate outbound TLS 1.3 sessions to the control host. Mutual TLS authenticates both sides, the control host binds the declared Recovery node ID to an explicit SHA-256 client-certificate fingerprint allowlist, and the node verifies the control host through CA/hostname validation plus its own fingerprint allowlist. The application protocol remains versioned, bounded newline-delimited JSON with only the existing typed inspect/restart capability family.
+
+The control host exposes one authenticated session slot per configured node. Session loss rejects pending requests and is observed as node unreachability without hiding healthy fleet members. The node reconnect lifecycle owns one session, reloads certificate/key/CA material before each attempt, resets delay after successful enrollment, exponentially backs off to a configured ceiling, and interrupts sleeps during shutdown.
+
+Credential rotation is overlap-based rather than remotely mutable: configure old+new fingerprints during transition, install the new local certificate/key files, allow reconnect to prove the new identity, then remove the retired fingerprint. MCP/AI receives no credential-management or transport-control capability.
+
+`loopback_http` remains only a migration/local-demo compatibility mode. Both node listener configuration and control gateway URLs fail closed when plaintext would leave loopback.
 
 ## Durable control state
 
@@ -302,7 +314,6 @@ Recovery Agent remains Draft. Major remaining gates are:
 
 - physical MCP Inspector/current supported host acceptance;
 - authorized real-model Recovery invocation through `@tjxjnoobie/strands-bridge`;
-- outbound production node enrollment, mTLS, credential rotation, and remote transport;
 - broader production adapters/actions where product scope requires them;
 - physical authorized production action -> execution -> resulting-state evidence.
 

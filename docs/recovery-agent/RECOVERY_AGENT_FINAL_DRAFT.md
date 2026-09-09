@@ -36,7 +36,7 @@ Connected systems retain their own responsibilities:
 - `@tjxjnoobie/strands-bridge` owns shared Strands lifecycle/MCP integration behavior;
 - Tavall Database owns PostgreSQL/JPA provider mechanics, transaction lifecycle, flush/rollback, and persistence implementation;
 - production service runtimes own their actual service lifecycle;
-- future production enrollment infrastructure owns remote node identity, mTLS, and credential lifecycle.
+- Recovery Agent owns its product-specific outbound node transport, node/control identity binding, reconnect policy, and credential-rotation contract; PKI issuance outside Recovery remains an operator/infrastructure responsibility.
 
 Recovery Agent must not create a general TypeScript database/repository/cache framework, expose normal arbitrary shell execution, or let a model authorize its own recovery action.
 
@@ -51,7 +51,9 @@ MCP host
           -> dependency ordering and suppression
           -> rolling automatic restart budget
           -> RecoveryDurabilityCheckpointBarrier
-          -> node HTTP gateways
+          -> node gateways
+              -> production outbound TLS 1.3 session gateways
+              -> loopback bearer HTTP compatibility only
               -> fixed SystemdNodeServiceRuntime
                   -> fixed HTTP/TCP app probes
                   -> deployment marker evidence
@@ -92,18 +94,13 @@ durable control state
 
 ## Node Boundary
 
-The node server exposes authenticated typed operations including:
+Production nodes initiate outbound TLS 1.3 sessions to the control host. The versioned bounded protocol exposes only typed `inspect_node`, `inspect_service`, `inspect_certificates`, and `restart_service` operations. Public service IDs map to fixed configured systemd units. Remote/model callers cannot supply unit names, shell commands/arguments, app-health URLs/ports, certificate targets, deployment marker paths, credentials, or arbitrary RPC payloads.
 
-```text
-GET  /v1/node
-GET  /v1/services/:serviceId
-POST /v1/services/:serviceId/restart
-GET  /v1/certificates
-```
+Mutual TLS authenticates both sides. The control host binds the declared Recovery node ID to an explicit SHA-256 client-certificate fingerprint allowlist. The node verifies control-host CA/hostname identity and an explicit control-certificate fingerprint allowlist. One active authenticated session is allowed per configured node. Requests are correlated, bounded, timed out, and rejected on session loss.
 
-Public service IDs map to fixed configured systemd units. Remote/model callers cannot supply unit names, shell commands/arguments, app-health URLs/ports, certificate targets, or deployment marker paths.
+The node reconnect lifecycle reloads certificate/private-key/CA files before each attempt, uses bounded exponential backoff, resets backoff after successful enrollment, and stops promptly during shutdown. On POSIX systems private-key files fail closed when they are symlinks, owned by another user, or grant group/other permissions. Rotation uses explicit old/new fingerprint overlap: install the new local files, reconnect and verify the new identity, then retire the old fingerprint. No model-facing credential or transport mutation API exists.
 
-The current node HTTP transport defaults to loopback and a per-node Bearer secret from environment configuration. Public Internet deployment is not claimed. Outbound enrollment, mTLS, rotation, and production remote transport remain required.
+Legacy HTTP endpoints (`GET /v1/node`, `GET /v1/services/:serviceId`, `POST /v1/services/:serviceId/restart`, `GET /v1/certificates`) remain only under explicit/legacy `loopback_http` compatibility for local development and the simulated demo. Non-loopback plaintext node listeners and control URLs are rejected.
 
 ### Service and application health
 
