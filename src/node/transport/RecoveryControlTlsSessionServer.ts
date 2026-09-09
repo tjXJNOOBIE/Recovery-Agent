@@ -67,9 +67,10 @@ export class RecoveryControlTlsSessionServer {
 
   public async listen(port = 0, host = '127.0.0.1'): Promise<RecoveryControlTlsSessionServerAddress> {
     if (this.server !== undefined) throw new Error('Recovery control TLS session server is already listening')
-    const clientCa = Array.isArray(this.options.clientCertificateAuthority)
-      ? [...this.options.clientCertificateAuthority]
-      : this.options.clientCertificateAuthority
+    const authority = this.options.clientCertificateAuthority
+    const clientCa: string | Buffer | (string | Buffer)[] = typeof authority === 'string' || Buffer.isBuffer(authority)
+      ? authority
+      : [...authority]
     const server = createServer({
       cert: this.options.certificate,
       key: this.options.privateKey,

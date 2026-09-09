@@ -54,9 +54,10 @@ export class RecoveryNodeOutboundTlsSession {
     return new Promise<void>((resolve, reject) => {
       const framer = new RecoveryNodeLineFramer()
       let settled = false
-      const controlCa = Array.isArray(this.options.controlCertificateAuthority)
-        ? [...this.options.controlCertificateAuthority]
-        : this.options.controlCertificateAuthority
+      const authority = this.options.controlCertificateAuthority
+      const controlCa: string | Buffer | (string | Buffer)[] = typeof authority === 'string' || Buffer.isBuffer(authority)
+        ? authority
+        : [...authority]
       const socket = connect({
         host: this.options.host,
         port: this.options.port,
