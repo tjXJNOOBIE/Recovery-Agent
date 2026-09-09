@@ -2,7 +2,7 @@
 
 > **Status:** Working E2E foundation / Draft promotion state  
 > **Document type:** Final Draft / proposed product and technical contract  
-> **Source of truth for:** Recovery Agent product policy, deterministic recovery, node/control protocol, durable control-state model, watch behavior, Strands boundary, MCP exposure, and approval boundary  
+> **Source of truth for:** Recovery Agent product policy, deterministic recovery, node/control protocol, durable control-state model, retention policy, watch behavior, Strands boundary, MCP exposure, and approval boundary  
 > **Must not define:** a second Strands framework, arbitrary remote shell execution, generic replacements for Tavall-owned infrastructure, or capabilities not supported by implementation evidence  
 > **Shared agent runtime:** `@tjxjnoobie/strands-bridge` at `69d27b147ee4f8bf0bfba43cbd0668a1ca4dd868`  
 > **MCP server runtime:** `@modelcontextprotocol/server` v2
@@ -11,7 +11,7 @@
 
 Recovery Agent is a control-host reliability agent for Linux services. AI runs away from production nodes; small node agents expose bounded deterministic observation and typed recovery actions. The system is designed to recover known safe failures, use Strands for ambiguous diagnosis/planning, and require a human boundary for elevated actions.
 
-> **Deterministic software observes, authorizes, budgets, orders, executes, persists mutation intent, and verifies. Strands interprets, investigates, plans, critiques, compiles bounded intent, and explains.**
+> **Deterministic software observes, authorizes, budgets, orders, executes, persists mutation intent, applies durable retention policy, and verifies. Strands interprets, investigates, plans, critiques, compiles bounded intent, and explains.**
 
 AI is not the mutation or authorization boundary.
 
@@ -24,6 +24,7 @@ Recovery Agent owns:
 - service, node-health, certificate, and deployment incident state;
 - typed recovery plans and semantic service-watch definitions;
 - Recovery audit events and deployment-correlation state;
+- product-specific durable terminal-history retention policy;
 - built-in node/certificate/deployment/readiness watches;
 - product-specific Strands prompts/parsers/orchestration;
 - human approval protocol, named approval-principal verification, and the local approval socket;
@@ -80,6 +81,9 @@ control-host human
 
 durable control state
   -> RecoveryDurableStateCoordinator
+      -> optional RecoveryDurableRetentionService
+          -> terminal-history candidate filter
+          -> audit never pruned
       -> strict RecoveryStateAuthorityProcessClient
           -> Java 25 Recovery state authority
               -> Tavall Database
@@ -132,6 +136,7 @@ recover node/service
       -> safe attempt available:
           -> record incident + consume automatic slot in runtime state
           -> durable write-ahead checkpoint
+              -> retention filters only terminal historical candidate state
               -> checkpoint failure: zero node mutation + mutation latch disabled
               -> checkpoint success: one typed restart
           -> fresh deterministic verification
@@ -168,7 +173,9 @@ Configuration rejects unknown dependency targets, duplicates, self-dependencies,
 - an interrupted `recovering` incident becomes human-required;
 - a fresh healthy inspection after uncertain execution resolves state without another restart;
 - durable plans must match their incident target, and incidents/plans/restart attempts must target configured Recovery services;
-- authority revision and authority-owned committed snapshot are reconciled together.
+- authority revision and authority-owned committed snapshot are reconciled together;
+- retention never deletes unresolved/in-doubt state or audit history;
+- retention filtering happens on the authority candidate rather than by overwriting unrelated concurrent live runtime state.
 
 ## Built-in Watch Surface
 
@@ -304,6 +311,48 @@ The public durable revision is monotonic and separate from Hibernate's private o
 
 The TypeScript process never owns a PostgreSQL connection. It communicates through strict line-delimited JSON over stdin/stdout. The authority exposes `ping`, `load`, and optimistic `commit` only; database credentials are environment-only.
 
+### Durable terminal-history retention
+
+Retention is an optional Recovery-domain policy and is disabled when `durableRetention` is absent:
+
+```json
+{
+  "durableRetention": {
+    "terminalHistoryDays": 90,
+    "terminalHistoryPerTarget": 200
+  }
+}
+```
+
+The policy runs against the prospective schema-v2 snapshot before every authority commit. It does not connect to PostgreSQL and does not add another repository/database abstraction.
+
+Eligible history:
+
+- resolved service recovery incidents whose related plans are all terminal;
+- related plans in `executed`, `rejected`, `failed`, or `superseded` state;
+- resolved node-health incidents;
+- resolved certificate incidents;
+- resolved deployment incidents.
+
+Never eligible:
+
+- unresolved service incidents of any status;
+- pending or approved plans;
+- semantic watch definitions;
+- rolling restart attempts;
+- current deployment marker/stabilization causality;
+- any audit entry.
+
+Service incident + plan history is one referential unit. Its terminal age is the latest timestamp from the incident's final timeline event or any related terminal plan `updatedAt`. For each target, terminal units are newest-first. A unit is pruned if it exceeds the age ceiling **or** falls beyond the configured per-target count ceiling.
+
+When a pruned resolved deployment incident is referenced by current deployment state, only that obsolete incident reference is removed. Marker/stabilization causality remains.
+
+The first successful checkpoint in a control-host generation that removes newly eligible identities appends a `retention_cleanup` audit event containing category counts and explicitly stating that audit history is retained. Failed authority commits do not mark cleanup committed. Subsequent checkpoints do not repeatedly audit the same already-pruned identities for that generation.
+
+Retention bounds the PostgreSQL authority snapshot immediately. Already-loaded terminal history may remain visible in the current TypeScript process until restart. This is deliberate: deleting only the durable candidate prevents historical state from being resurrected in PostgreSQL without racing or overwriting unrelated live state. Every later checkpoint applies the retention filter again.
+
+Audit remains append-only and unpruned under schema v2. This is the intentional audit retention policy, not an omission.
+
 ### Intentionally transient state
 
 Scheduler pulse bookkeeping is not durable domain authority. Due-run timestamps and equivalent timer bookkeeping remain process-local so routine cadence does not create meaningless database writes. Causal watch state and incident history are durable; timer implementation details are not.
@@ -318,17 +367,20 @@ Startup ordering is:
 read control config
   -> build deterministic runtime (surfaces still hidden)
   -> resolve named approval principals and fail closed on invalid active credentials
+  -> build optional retention policy
   -> start/load state authority
   -> strictly parse v1/v2 snapshot and normalize to v2
   -> restore incidents/plans/restart attempts/semantic watches
   -> restore node/certificate/deployment causal state
   -> reconcile interrupted/uncertain recovery state
   -> bind durability barrier
-  -> commit control_start audit checkpoint
+  -> build control_start candidate
+  -> apply retention to terminal historical candidate state
+  -> commit control_start + any retention_cleanup audit
   -> expose approval socket / watches / MCP
 ```
 
-If hydration, approval-principal construction, or the startup checkpoint fails, the operational surfaces are not exposed. Cleanup preserves the original error and aggregates cleanup failures when necessary.
+If hydration, approval-principal construction, retention validation, or the startup checkpoint fails, operational surfaces are not exposed. Cleanup preserves the original error and aggregates cleanup failures when necessary.
 
 During normal operation, the first failed durability checkpoint permanently latches mutation-intent operations off for that process. Read-only inspection remains available. This prevents the runtime from continuing node mutations after losing authoritative write-ahead state.
 
@@ -378,16 +430,16 @@ Approval/rejection are intentionally absent.
 
 ## Validation Requirements and Current Evidence
 
-Audited implementation/security head: `e5c0ed4f4bbc001e68986838bdacbe14039f3cc2`.
+Audited retention implementation head: `1c32e9a591b067de849130d14f7544f406082a32`.
 
-GitHub fallback workflow run `34372133147` (#17) passed all three jobs on that implementation head.
+GitHub fallback workflow run `34392908758` (#20) passed all three jobs on that implementation head.
 
 ### TypeScript E2E
 
 - Node 22.23.2;
 - networked dependency install including the pinned `@tjxjnoobie/strands-bridge` source;
 - strict TypeScript check;
-- **122/122 tests passed**;
+- **129/129 tests passed**;
 - production build.
 
 Delegate coverage includes:
@@ -399,7 +451,14 @@ Delegate coverage includes:
 - approval/automatic per-target concurrency safety and crash-state reconciliation;
 - failed write-ahead checkpoint executes zero automatic restart;
 - failed approval-intent checkpoint executes zero approved restart;
-- named-principal legacy bypass prevention, expiry, revocation, duplicate-active-secret rejection, known-principal impersonation prevention, and verified approval/rejection audit identity.
+- named-principal legacy bypass prevention, expiry, revocation, duplicate-active-secret rejection, known-principal impersonation prevention, and verified approval/rejection audit identity;
+- retention default-off/opt-in parsing and invalid-bound rejection;
+- terminal-only retention with unresolved/nonterminal protection;
+- referential incident+plan retention and latest terminal timestamp selection;
+- audit preservation and deployment-causality preservation;
+- failed-retention-commit rollback semantics;
+- prevention of durable history resurrection from already-loaded process memory;
+- no duplicate `retention_cleanup` audit for the same pruned identities during one process generation.
 
 ### Java durable state authority
 
@@ -432,7 +491,6 @@ Still intentionally unclaimed:
 
 This document remains `FINAL_DRAFT`. Remaining gates include:
 
-- retention and cleanup policy for durable incident/audit/watch history;
 - physical official MCP Inspector/current-host acceptance;
 - authorized real-model Recovery invocation through the current Strands bridge;
 - outbound node enrollment, mTLS, credential rotation, and production remote transport;
@@ -442,7 +500,7 @@ This document remains `FINAL_DRAFT`. Remaining gates include:
 ## Final Invariants
 
 - AI does not run on production nodes.
-- Deterministic software owns target binding, health, dependency gates, rolling budgets, authorization verification, mutation, write-ahead persistence, and fresh verification.
+- Deterministic software owns target binding, health, dependency gates, rolling budgets, authorization verification, mutation, write-ahead persistence, durable retention, and fresh verification.
 - A running process is not sufficient application health when app probes exist.
 - Callers cannot choose node-local units/probe targets/TLS targets/deployment marker paths.
 - One unreachable node does not erase the reachable fleet.
@@ -457,6 +515,12 @@ This document remains `FINAL_DRAFT`. Remaining gates include:
 - Causal node/certificate/deployment state survives restart; transient scheduler pulses do not become durable noise.
 - Approval audit identity comes from verified principal credentials, not caller-supplied actor text.
 - Two active principals cannot share the same resolved secret.
+- Retention is opt-in, terminal-only, and cannot prune unresolved/in-doubt state.
+- Service incidents and their plans are retained/pruned as one referential unit.
+- Current deployment causal state survives historical deployment-incident cleanup.
+- Audit history is append-only and never pruned under schema v2.
+- Failed durable cleanup commits do not count as cleanup.
+- Already-loaded terminal history may remain visible until restart but cannot be resurrected into PostgreSQL.
 - Durability loss blocks mutation rather than allowing unrecorded external effects.
 - Arbitrary shell execution is not a normal capability.
 - Demo simulation remains explicitly labeled.
