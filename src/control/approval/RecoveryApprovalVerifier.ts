@@ -33,12 +33,20 @@ export class RecoveryApprovalVerifier {
   public static fromConfig(configs: readonly RecoveryApprovalPrincipalConfig[], environment: RecoveryApprovalEnvironment, legacySecret: string | undefined, clock: RecoveryApprovalClock = Date.now): RecoveryApprovalVerifier {
     const nowMs = clock()
     if (!Number.isFinite(nowMs)) throw new Error('Recovery approval clock must return a finite timestamp')
+    const activeSecrets = new Map<string, string>()
     const principals = configs.map((config) => {
       const expiresAtMs = config.expiresAt === undefined ? undefined : Date.parse(config.expiresAt)
       const alreadyExpired = expiresAtMs !== undefined && nowMs >= expiresAtMs
       const value = environment[config.tokenEnvironmentVariable]?.trim()
-      if (!config.revoked && !alreadyExpired && (value === undefined || value.length < 16)) {
-        throw new Error(`Environment variable ${config.tokenEnvironmentVariable} must contain an approval token of at least 16 characters for principal ${config.id}`)
+      if (!config.revoked && !alreadyExpired) {
+        if (value === undefined || value.length < 16) {
+          throw new Error(`Environment variable ${config.tokenEnvironmentVariable} must contain an approval token of at least 16 characters for principal ${config.id}`)
+        }
+        const existingPrincipalId = activeSecrets.get(value)
+        if (existingPrincipalId !== undefined) {
+          throw new Error(`Recovery approval principals ${existingPrincipalId} and ${config.id} must not share the same active secret`)
+        }
+        activeSecrets.set(value, config.id)
       }
       return {
         id: config.id,

@@ -15,8 +15,10 @@ import { RecoveryPlanRuntimeState } from '../../../src/control/plan/runtime/Reco
 import type { INodeAgentGateway } from '../../../src/node/gateway/INodeAgentGateway.js'
 
 const ACTIVE_PRINCIPAL: RecoveryApprovalPrincipalConfig = { id: 'tj', tokenEnvironmentVariable: 'RECOVERY_APPROVAL_TOKEN_TJ', revoked: false, expiresAt: '2026-09-09T00:00:00.000Z' }
+const BACKUP_PRINCIPAL: RecoveryApprovalPrincipalConfig = { id: 'backup-operator', tokenEnvironmentVariable: 'RECOVERY_APPROVAL_TOKEN_BACKUP', revoked: false, expiresAt: '2026-09-09T00:00:00.000Z' }
 const NOW_MS = Date.parse('2026-09-08T22:00:00.000Z')
 const SECRET = 'principal-secret-1234567890'
+const BACKUP_SECRET = 'backup-secret-123456789000'
 const LEGACY_SECRET = 'legacy-secret-123456789000'
 const healthySnapshot = { nodeId: 'east', serviceId: 'payments', lifecycleState: 'running' as const, healthy: true, detail: 'healthy', observedAt: '2026-09-08T22:00:00.000Z', restartCount: 1 }
 
@@ -32,6 +34,45 @@ test('namedPrincipalAuthenticatesIdentityAndLegacySecretCannotBypassPrincipalMod
   assert.throws(() => verifier.verify(LEGACY_SECRET), /principal-id:secret/)
   assert.throws(() => verifier.verify(`other:${SECRET}`), /Unknown Recovery approval principal/)
   assert.throws(() => verifier.verify('tj:wrong-secret-1234567890'), /token is invalid/)
+})
+
+test('activeApprovalPrincipalsMustResolveToDistinctSecrets', () => {
+  assert.throws(
+    () => RecoveryApprovalVerifier.fromConfig(
+      [ACTIVE_PRINCIPAL, BACKUP_PRINCIPAL],
+      { RECOVERY_APPROVAL_TOKEN_TJ: SECRET, RECOVERY_APPROVAL_TOKEN_BACKUP: SECRET },
+      undefined,
+      () => NOW_MS,
+    ),
+    /must not share the same active secret/,
+  )
+
+  const revokedCollision = RecoveryApprovalVerifier.fromConfig(
+    [ACTIVE_PRINCIPAL, { ...BACKUP_PRINCIPAL, revoked: true }],
+    { RECOVERY_APPROVAL_TOKEN_TJ: SECRET, RECOVERY_APPROVAL_TOKEN_BACKUP: SECRET },
+    undefined,
+    () => NOW_MS,
+  )
+  assert.deepEqual(revokedCollision.verify(`tj:${SECRET}`), { actor: 'tj', mode: 'principal' })
+
+  const expiredCollision = RecoveryApprovalVerifier.fromConfig(
+    [ACTIVE_PRINCIPAL, { ...BACKUP_PRINCIPAL, expiresAt: '2026-09-08T21:00:00.000Z' }],
+    { RECOVERY_APPROVAL_TOKEN_TJ: SECRET, RECOVERY_APPROVAL_TOKEN_BACKUP: SECRET },
+    undefined,
+    () => NOW_MS,
+  )
+  assert.deepEqual(expiredCollision.verify(`tj:${SECRET}`), { actor: 'tj', mode: 'principal' })
+})
+
+test('principalIdPrefixCannotImpersonateAnotherActivePrincipal', () => {
+  const verifier = RecoveryApprovalVerifier.fromConfig(
+    [ACTIVE_PRINCIPAL, BACKUP_PRINCIPAL],
+    { RECOVERY_APPROVAL_TOKEN_TJ: SECRET, RECOVERY_APPROVAL_TOKEN_BACKUP: BACKUP_SECRET },
+    undefined,
+    () => NOW_MS,
+  )
+  assert.deepEqual(verifier.verify(`backup-operator:${BACKUP_SECRET}`), { actor: 'backup-operator', mode: 'principal' })
+  assert.throws(() => verifier.verify(`backup-operator:${SECRET}`), /token is invalid/)
 })
 
 test('revokedExpiredAndMissingPrincipalCredentialsFailClosed', () => {
@@ -70,6 +111,28 @@ test('approvedMutationWriteAheadAuditUsesAuthenticatedPrincipalIdentity', async 
   assert.equal(checkpoint.requests[0]?.actor, 'tj')
   assert.equal(checkpoint.requests[0]?.action, 'approved_restart_intent')
   assert.match(result.incident.timeline.find((entry) => entry.kind === 'approval')?.message ?? '', /from tj/)
+})
+
+test('rejectionWriteAheadAuditUsesAuthenticatedPrincipalIdentity', async () => {
+  const incidentState = new RecoveryIncidentRuntimeState()
+  let incident = incidentState.open('east', 'payments', 'unhealthy')
+  incident = incidentState.append(incident.id, 'plan_proposed', 'elevated restart proposed', 'approval_required')
+  const planState = new RecoveryPlanRuntimeState()
+  const plan = planState.create({ incidentId: incident.id, nodeId: 'east', serviceId: 'payments', rationale: 'one bounded restart' })
+  const checkpoint = new RecordingCheckpoint()
+  const handler = new RecoveryPlanApprovalHandler(
+    planState,
+    incidentState,
+    RecoveryApprovalVerifier.fromConfig([ACTIVE_PRINCIPAL], { RECOVERY_APPROVAL_TOKEN_TJ: SECRET }, undefined, () => NOW_MS),
+    new ApprovedRecoveryExecutor([], []),
+    checkpoint,
+  )
+
+  const rejected = await handler.reject(plan.id, `tj:${SECRET}`, 'operator rejected the proposed restart')
+  assert.equal(rejected.status, 'rejected')
+  assert.equal(checkpoint.requests[0]?.actor, 'tj')
+  assert.equal(checkpoint.requests[0]?.action, 'recovery_plan_rejected')
+  assert.match(incidentState.list()[0]?.timeline.find((entry) => entry.kind === 'approval')?.message ?? '', /rejected by tj/)
 })
 
 test('controlConfigParsesUniqueRevocableApprovalPrincipalsWithoutSecrets', () => {
