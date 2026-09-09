@@ -25,16 +25,19 @@ jobs:
 
           path = Path('.github/workflows/production-systemd-acceptance.yml')
           text = path.read_text()
-          old = '''          sudo -u recovery-node-test env \\
-            HOME="$root/node" \\
-            PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \\
-            /usr/bin/node "$package_root/dist/cli/main.js" node "$root/node/node.json" \\
-            >"$root/logs/node.out" 2>"$root/logs/node.err" &
-          echo $! > "$root/node-agent.pid"
-          sleep 1
-          kill -0 "$(cat "$root/node-agent.pid")"
-          '''
-          new = '''          sudo -u recovery-node-test env \\
+          start_marker = '      - name: Start packaged production node as restricted user\n'
+          end_marker = '      - name: Accept current MCP Inspector against packaged control host\n'
+          start = text.find(start_marker)
+          end = text.find(end_marker, start + len(start_marker))
+          if start < 0 or end < 0:
+              raise SystemExit('acceptance startup step markers not found')
+
+          replacement = """      - name: Start packaged production node as restricted user
+        run: |
+          set -euo pipefail
+          root=/tmp/recovery-acceptance
+          package_root=/tmp/recovery-node-consumer/node_modules/@tjxjnoobie/recovery-agent
+          sudo -u recovery-node-test env \\
             HOME="$root/node" \\
             PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \\
             /usr/bin/node "$package_root/dist/cli/main.js" node "$root/node/node.json" \\
@@ -54,10 +57,9 @@ jobs:
             exit 1
           fi
           echo "$node_pid" > "$root/node-agent.pid"
-          '''
-          if old not in text:
-              raise SystemExit('expected restricted-node startup block not found')
-          path.write_text(text.replace(old, new, 1))
+
+"""
+          path.write_text(text[:start] + replacement + text[end:])
 
       - name: Commit correction and remove helper
         shell: bash
