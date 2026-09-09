@@ -33,7 +33,7 @@ jobs:
           echo $! > "$root/node-agent.pid"
           sleep 1
           kill -0 "$(cat "$root/node-agent.pid")"
-'''
+          '''
           new = '''          sudo -u recovery-node-test env \\
             HOME="$root/node" \\
             PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \\
@@ -54,7 +54,7 @@ jobs:
             exit 1
           fi
           echo "$node_pid" > "$root/node-agent.pid"
-'''
+          '''
           if old not in text:
               raise SystemExit('expected restricted-node startup block not found')
           path.write_text(text.replace(old, new, 1))
