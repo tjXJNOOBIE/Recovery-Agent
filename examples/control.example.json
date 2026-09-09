@@ -1,4 +1,14 @@
 {
+  "transport": {
+    "mode": "outbound_tls",
+    "listenHost": "0.0.0.0",
+    "listenPort": 7843,
+    "certificateFile": "/etc/recovery/control/control.crt",
+    "privateKeyFile": "/etc/recovery/control/control.key",
+    "clientCertificateAuthorityFile": "/etc/recovery/control/node-ca.crt",
+    "requestTimeoutMs": 10000,
+    "enrollmentTimeoutMs": 5000
+  },
   "approvalPrincipals": [
     {
       "id": "primary-operator",
@@ -18,8 +28,9 @@
   "nodes": [
     {
       "id": "production-east-01",
-      "baseUrl": "http://127.0.0.1:7281",
-      "tokenEnvironmentVariable": "RECOVERY_NODE_TOKEN_EAST_01",
+      "allowedCertificateFingerprints": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
       "services": [
         {
           "id": "postgres",
