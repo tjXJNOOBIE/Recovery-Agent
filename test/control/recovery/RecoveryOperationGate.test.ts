@@ -49,3 +49,55 @@ test('coalescesConcurrentRecoveryForSameTargetButNotDifferentTargets', async () 
   assert.equal(afterCompletion.status, 'healthy')
   assert.equal(firstCalls, 2)
 })
+
+test('serializesExclusiveApprovedWorkAgainstAutomaticRecoveryForSameTarget', async () => {
+  const gate = new RecoveryOperationGate()
+  let releaseExclusive: (() => void) | undefined
+  const sequence: string[] = []
+
+  const exclusive = gate.runExclusive('node-a', 'payments', () => new Promise<string>((resolve) => {
+    sequence.push('approval-started')
+    releaseExclusive = () => {
+      sequence.push('approval-finished')
+      resolve('approved-result')
+    }
+  }))
+
+  let recoveryCalls = 0
+  const recovery = gate.run('node-a', 'payments', async () => {
+    recoveryCalls += 1
+    sequence.push('recovery-started')
+    return healthyResult('payments')
+  })
+
+  assert.equal(recoveryCalls, 0)
+  assert.deepEqual(sequence, ['approval-started'])
+  assert.ok(releaseExclusive)
+  releaseExclusive()
+
+  assert.equal(await exclusive, 'approved-result')
+  assert.equal((await recovery).status, 'healthy')
+  assert.equal(recoveryCalls, 1)
+  assert.deepEqual(sequence, ['approval-started', 'approval-finished', 'recovery-started'])
+})
+
+test('serializesExclusiveWorkQueuedBehindRecoveryAndReevaluatesAfterFailure', async () => {
+  const gate = new RecoveryOperationGate()
+  let rejectRecovery: ((error: Error) => void) | undefined
+  const recovery = gate.run('node-a', 'payments', () => new Promise<RecoveryRunResult>((_resolve, reject) => {
+    rejectRecovery = reject
+  }))
+
+  let exclusiveCalls = 0
+  const exclusive = gate.runExclusive('node-a', 'payments', async () => {
+    exclusiveCalls += 1
+    return 'exclusive-after-failure'
+  })
+  assert.equal(exclusiveCalls, 0)
+
+  assert.ok(rejectRecovery)
+  rejectRecovery(new Error('recovery failed'))
+  await assert.rejects(recovery, /recovery failed/)
+  assert.equal(await exclusive, 'exclusive-after-failure')
+  assert.equal(exclusiveCalls, 1)
+})

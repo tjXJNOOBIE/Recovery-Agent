@@ -31,7 +31,7 @@ jobs:
         run: npm run check
 
       - name: Verify npm package shape
-        run: npm pack --dry-run --json
+        run: npm pack --dry-run --ignore-scripts --json
 
       - name: Verify demo truthfulness label
         shell: bash

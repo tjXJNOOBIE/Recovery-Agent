@@ -102,7 +102,7 @@ test('semanticWatchUpdateCannotRetargetExistingWatch', async () => {
   assert.equal(serviceWatches.listStates()[0]?.serviceId, 'payments')
 })
 
-test('removeWinningRaceWithUpdateCannotReinstallOrphanedSchedulerOverride', async () => {
+test('removeWinningRaceWithUpdateCannotReinstallOrphanedDurableWatchOverride', async () => {
   const serviceWatches = new RecoveryWatchService(new CountingRecoveryRuntime(), [])
   const compiler = new BlockingUpdateCompiler()
   const semantic = new RecoverySemanticWatchService(compiler, serviceWatches)

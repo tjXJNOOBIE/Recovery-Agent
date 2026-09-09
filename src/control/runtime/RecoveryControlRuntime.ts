@@ -2,6 +2,8 @@ import type { CertificateSnapshot } from '../../node/certificate/CertificateSnap
 import type { NodeSnapshot, ServiceSnapshot } from '../../node/data/ServiceSnapshot.js'
 import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
 import type { RecoveryPlanApprovalResult } from '../approval/RecoveryPlanApprovalHandler.js'
+import type { RecoveryAutomaticRestartAttempt } from '../budget/RecoveryAutomaticRestartBudget.js'
+import type { IRecoveryDurabilityCheckpoint } from '../durability/RecoveryDurabilityCheckpointBarrier.js'
 import type { IncidentRecord } from '../incident/data/IncidentRecord.js'
 import type { RecoveryIncidentRuntimeState } from '../incident/runtime/RecoveryIncidentRuntimeState.js'
 import type { RecoveryPlan } from '../plan/RecoveryPlan.js'
@@ -17,6 +19,12 @@ import type { RecoveryRunResult } from '../recovery/RecoveryRunResult.js'
 export interface UnreachableNodeObservation { readonly nodeId: string; readonly error: string }
 export interface FleetStatusResult { readonly nodes: readonly NodeSnapshot[]; readonly unreachableNodes: readonly UnreachableNodeObservation[]; readonly healthyServices: number; readonly unhealthyServices: number }
 
+export interface RecoveryControlDurableState {
+  readonly incidents: readonly IncidentRecord[]
+  readonly plans: readonly RecoveryPlan[]
+  readonly restartAttempts: readonly RecoveryAutomaticRestartAttempt[]
+}
+
 export class RecoveryControlRuntime {
   private readonly gateways: readonly INodeAgentGateway[]
   private readonly policies: readonly ServiceRecoveryPolicy[]
@@ -26,6 +34,7 @@ export class RecoveryControlRuntime {
   private readonly operationGate: RecoveryOperationGate
   private readonly readinessInspector: RecoveryReadinessInspector
   private readonly postmortemGenerator: IRecoveryPostmortemGenerator | undefined
+  private readonly durabilityCheckpoint: IRecoveryDurabilityCheckpoint | undefined
 
   public constructor(
     gateways: readonly INodeAgentGateway[],
@@ -36,6 +45,7 @@ export class RecoveryControlRuntime {
     operationGate: RecoveryOperationGate,
     readinessInspector?: RecoveryReadinessInspector,
     postmortemGenerator?: IRecoveryPostmortemGenerator,
+    durabilityCheckpoint?: IRecoveryDurabilityCheckpoint,
   ) {
     this.gateways = [...gateways]
     this.policies = [...policies]
@@ -51,6 +61,61 @@ export class RecoveryControlRuntime {
       this.planControl,
     )
     this.postmortemGenerator = postmortemGenerator
+    this.durabilityCheckpoint = durabilityCheckpoint
+  }
+
+  public restoreDurableState(state: RecoveryControlDurableState): void {
+    const configuredTargets = new Set(this.policies.map((policy) => this.targetKey(policy.nodeId, policy.serviceId)))
+    const incidentsById = new Map<string, IncidentRecord>()
+    for (const incident of state.incidents) {
+      if (incidentsById.has(incident.id)) throw new Error(`Duplicate recovery incident id during control restore: ${incident.id}`)
+      const target = this.targetKey(incident.nodeId, incident.serviceId)
+      if (!configuredTargets.has(target)) throw new Error(`Recovery incident ${incident.id} targets unconfigured service ${target}`)
+      incidentsById.set(incident.id, incident)
+    }
+
+    const pendingTargets = new Set<string>()
+    for (const plan of state.plans) {
+      const incident = incidentsById.get(plan.incidentId)
+      if (incident === undefined) {
+        throw new Error(`Recovery plan ${plan.id} references unknown incident ${plan.incidentId}`)
+      }
+      const target = this.targetKey(plan.nodeId, plan.serviceId)
+      if (!configuredTargets.has(target)) throw new Error(`Recovery plan ${plan.id} targets unconfigured service ${target}`)
+      if (incident.nodeId !== plan.nodeId || incident.serviceId !== plan.serviceId) {
+        throw new Error(`Recovery plan ${plan.id} target ${target} does not match incident ${incident.id} target ${this.targetKey(incident.nodeId, incident.serviceId)}`)
+      }
+      if (plan.status === 'pending_approval') {
+        if (incident.status !== 'approval_required') {
+          throw new Error(`Pending recovery plan ${plan.id} requires incident ${incident.id} to be approval_required, found ${incident.status}`)
+        }
+        if (pendingTargets.has(target)) throw new Error(`Multiple pending recovery plans cannot be restored for ${target}`)
+        pendingTargets.add(target)
+      }
+      if (plan.status === 'approved' && incident.status !== 'recovering') {
+        throw new Error(`Approved recovery plan ${plan.id} requires incident ${incident.id} to be recovering, found ${incident.status}`)
+      }
+    }
+
+    for (const [index, attempt] of state.restartAttempts.entries()) {
+      const target = this.targetKey(attempt.nodeId, attempt.serviceId)
+      if (!configuredTargets.has(target)) {
+        throw new Error(`Recovery restart attempt[${index}] targets unconfigured service ${target}`)
+      }
+    }
+
+    this.incidentState.restore(state.incidents)
+    this.planControl.restore(state.plans)
+    this.recoveryOrchestrator.restoreAutomaticRestartAttempts(state.restartAttempts)
+    this.reconcileInterruptedDurableState()
+  }
+
+  public exportDurableState(): RecoveryControlDurableState {
+    return {
+      incidents: this.incidentState.list(),
+      plans: this.planControl.list(),
+      restartAttempts: this.recoveryOrchestrator.listAutomaticRestartAttempts(),
+    }
   }
 
   public async fleetStatus(): Promise<FleetStatusResult> {
@@ -103,9 +168,22 @@ export class RecoveryControlRuntime {
   }
 
   public recoverService(nodeId: string, serviceId: string): Promise<RecoveryRunResult> {
+    this.durabilityCheckpoint?.assertMutationAllowed()
     const policy = this.requirePolicy(nodeId, serviceId)
     const gateway = this.requireGateway(nodeId)
-    return this.operationGate.run(nodeId, serviceId, () => this.recoverOrRespectSuppression(gateway, policy))
+    return this.operationGate.run(nodeId, serviceId, async () => {
+      const result = await this.recoverOrRespectSuppression(gateway, policy)
+      if (this.shouldCheckpoint(result)) {
+        await this.durabilityCheckpoint?.checkpoint({
+          actor: 'recovery-agent',
+          action: 'recovery_state_verified',
+          summary: `Recovery operation finished with status ${result.status}; restartAttempts=${result.restartAttempts}`,
+          nodeId,
+          serviceId,
+        })
+      }
+      return result
+    })
   }
 
   public async healthSweep(): Promise<readonly RecoveryRunResult[]> {
@@ -142,11 +220,21 @@ export class RecoveryControlRuntime {
   }
 
   public approveRecoveryPlan(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
-    return this.planControl.approve(planId, approvalToken)
+    this.durabilityCheckpoint?.assertMutationAllowed()
+    const plan = this.planControl.inspect(planId)
+    return this.operationGate.runExclusive(plan.nodeId, plan.serviceId, () => {
+      this.durabilityCheckpoint?.assertMutationAllowed()
+      return this.planControl.approve(planId, approvalToken)
+    })
   }
 
-  public rejectRecoveryPlan(planId: string, approvalToken: string, reason: string): RecoveryPlan {
-    return this.planControl.reject(planId, approvalToken, reason)
+  public rejectRecoveryPlan(planId: string, approvalToken: string, reason: string): Promise<RecoveryPlan> {
+    this.durabilityCheckpoint?.assertMutationAllowed()
+    const plan = this.planControl.inspect(planId)
+    return this.operationGate.runExclusive(plan.nodeId, plan.serviceId, () => {
+      this.durabilityCheckpoint?.assertMutationAllowed()
+      return this.planControl.reject(planId, approvalToken, reason)
+    })
   }
 
   public async close(): Promise<void> {
@@ -160,6 +248,34 @@ export class RecoveryControlRuntime {
     }
     if (failures.length > 0) {
       throw new AggregateError(failures, 'Failed to close one or more node gateways')
+    }
+  }
+
+  private reconcileInterruptedDurableState(): void {
+    const reconciledIncidentIds = new Set<string>()
+    for (const plan of [...this.planControl.list()]) {
+      if (plan.status !== 'approved') continue
+      this.planControl.failApprovedAfterRestart(
+        plan.id,
+        'Control host restarted after approval was durably recorded but before a verified execution outcome was durably committed; execution outcome is unknown',
+      )
+      this.incidentState.append(
+        plan.incidentId,
+        'escalated',
+        `Recovery plan ${plan.id} had durable approval but no durable verified outcome after control-host restart; automatic mutation is suppressed until fresh reconciliation`,
+        'human_required',
+      )
+      reconciledIncidentIds.add(plan.incidentId)
+    }
+
+    for (const incident of [...this.incidentState.list()]) {
+      if (incident.status !== 'recovering' || reconciledIncidentIds.has(incident.id)) continue
+      this.incidentState.append(
+        incident.id,
+        'escalated',
+        'Control host restarted while recovery was in progress without a durable terminal outcome; automatic mutation is suppressed until fresh reconciliation',
+        'human_required',
+      )
     }
   }
 
@@ -248,6 +364,10 @@ export class RecoveryControlRuntime {
       )
     }
     return this.recoveryOrchestrator.recover(gateway, policy)
+  }
+
+  private shouldCheckpoint(result: RecoveryRunResult): boolean {
+    return result.restartAttempts > 0 || result.incident !== undefined || result.recoveryPlan !== undefined
   }
 
   private async inspectUnhealthyDependencies(policy: ServiceRecoveryPolicy): Promise<readonly ServiceSnapshot[]> {

@@ -1,0 +1,148 @@
+name: Fallback validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  typescript:
+    name: TypeScript E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run checks
+        run: npm run check
+
+  durable-state:
+    name: Java durable state authority
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.7.1'
+      - name: Run state authority tests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gradle -p state-authority test --stacktrace
+
+  package-e2e:
+    name: Packaged control-host E2E
+    needs: [typescript, durable-state]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: recovery
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: recovery-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d recovery"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.7.1'
+      - name: Install source dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build real npm tarball
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm pack --silent > /tmp/recovery-package-name
+          tail -n 1 /tmp/recovery-package-name > /tmp/recovery-tarball
+      - name: Install tarball into clean consumer
+        run: |
+          mkdir -p /tmp/recovery-consumer
+          cd /tmp/recovery-consumer
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$(cat /tmp/recovery-tarball)" --no-audit --no-fund
+      - name: Verify installed authority payload
+        run: |
+          PACKAGE_ROOT=/tmp/recovery-consumer/node_modules/@tjxjnoobie/recovery-agent
+          test -x "$PACKAGE_ROOT/state-authority-runtime/bin/recovery-state-authority"
+          find "$PACKAGE_ROOT/state-authority-runtime/lib" -type f -name '*.jar' -print -quit | grep -q .
+          test -f "$PACKAGE_ROOT/dist/cli/main.js"
+      - name: Run installed authority against PostgreSQL
+        env:
+          RECOVERY_STATE_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/recovery
+          RECOVERY_STATE_DB_USERNAME: postgres
+          RECOVERY_STATE_DB_PASSWORD: recovery-test-password
+          RECOVERY_STATE_GENERATE_SCHEMA: 'true'
+        run: |
+          PACKAGE_ROOT=/tmp/recovery-consumer/node_modules/@tjxjnoobie/recovery-agent
+          printf '%s\n' \
+            '{"id":"package-ping","operation":"ping"}' \
+            '{"id":"package-load","operation":"load"}' \
+            | "$PACKAGE_ROOT/state-authority-runtime/bin/recovery-state-authority" \
+            > /tmp/recovery-state-output
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const lines = readFileSync('/tmp/recovery-state-output', 'utf8').trim().split(/\r?\n/).filter(Boolean)
+          if (lines.length !== 2) throw new Error(`Expected exactly 2 authority responses, received ${lines.length}`)
+          const ping = JSON.parse(lines[0])
+          const load = JSON.parse(lines[1])
+          if (ping.id !== 'package-ping' || ping.ok !== true || ping.available !== true) throw new Error('Packaged authority ping failed')
+          if (load.id !== 'package-load' || load.ok !== true || load.revision !== 0 || load.snapshot?.schemaVersion !== 2) throw new Error('Packaged authority load failed')
+          NODE
+      - name: Run installed control host with bundled authority resolution
+        working-directory: /tmp/recovery-consumer
+        env:
+          RECOVERY_NODE_TOKEN_PACKAGE: test-node-token-1234567890
+          RECOVERY_STATE_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/recovery
+          RECOVERY_STATE_DB_USERNAME: postgres
+          RECOVERY_STATE_DB_PASSWORD: recovery-test-password
+          RECOVERY_STATE_GENERATE_SCHEMA: 'true'
+        run: |
+          cat > control.json <<'JSON'
+          {
+            "nodes": [
+              {
+                "id": "package-node",
+                "baseUrl": "http://127.0.0.1:65534",
+                "tokenEnvironmentVariable": "RECOVERY_NODE_TOKEN_PACKAGE",
+                "services": [
+                  {
+                    "id": "package-service",
+                    "restartAllowed": false,
+                    "maxRestartAttempts": 0,
+                    "watchEnabled": false
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+          timeout 15s npx --no-install recovery-agent mcp ./control.json </dev/null >/tmp/recovery-mcp-output 2>/tmp/recovery-mcp-error
+          grep -q 'Recovery durable state authority hydrated revision 0' /tmp/recovery-mcp-error
+      - name: Run demo from installed npm package
+        working-directory: /tmp/recovery-consumer
+        run: npx --no-install recovery-agent demo > /tmp/recovery-demo.json
+      - name: Verify demo truthfulness label
+        run: node -e "const d=require('/tmp/recovery-demo.json'); if(d.label!=='SIMULATED DEMONSTRATION') process.exit(1)"

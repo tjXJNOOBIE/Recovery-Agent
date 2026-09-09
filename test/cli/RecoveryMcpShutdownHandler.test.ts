@@ -12,10 +12,10 @@ function closeable(name: string, order: string[], error?: unknown): { close(): P
   }
 }
 
-test('attemptsEveryMcpCleanupInOrderAfterEarlierFailure', async () => {
+test('attemptsEveryDurableMcpCleanupInOrderAfterEarlierFailure', async () => {
   const order: string[] = []
   const mcpError = new Error('mcp close failed')
-  const controlError = new Error('control close failed')
+  const durabilityError = new Error('durability close failed')
   const handler = new RecoveryMcpShutdownHandler()
 
   await assert.rejects(
@@ -23,32 +23,26 @@ test('attemptsEveryMcpCleanupInOrderAfterEarlierFailure', async () => {
       mcpServer: closeable('mcp', order, mcpError),
       watches: closeable('watches', order),
       approvalServer: closeable('approval', order),
-      control: closeable('control', order, controlError),
+      durability: closeable('durability', order, durabilityError),
+      control: closeable('control', order),
     }),
     (error: unknown) => {
       assert.ok(error instanceof AggregateError)
-      assert.deepEqual(error.errors, [mcpError, controlError])
+      assert.deepEqual(error.errors, [mcpError, durabilityError])
       assert.equal(error.cause, mcpError)
       return true
     },
   )
 
-  assert.deepEqual(order, ['mcp', 'watches', 'approval', 'control'])
+  assert.deepEqual(order, ['mcp', 'watches', 'approval', 'durability', 'control'])
 })
 
-test('surfacesSingleShutdownFailureAfterAttemptingRemainingResources', async () => {
+test('omitsOptionalApprovalAndDurabilityResourcesWithoutChangingShutdownOrder', async () => {
   const order: string[] = []
-  const watchesError = new Error('watch close failed')
-  const handler = new RecoveryMcpShutdownHandler()
-
-  await assert.rejects(
-    handler.close({
-      mcpServer: closeable('mcp', order),
-      watches: closeable('watches', order, watchesError),
-      control: closeable('control', order),
-    }),
-    watchesError,
-  )
-
+  await new RecoveryMcpShutdownHandler().close({
+    mcpServer: closeable('mcp', order),
+    watches: closeable('watches', order),
+    control: closeable('control', order),
+  })
   assert.deepEqual(order, ['mcp', 'watches', 'control'])
 })
