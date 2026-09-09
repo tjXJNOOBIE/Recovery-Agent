@@ -24,6 +24,12 @@ export interface RecoveryNodeProtocolHello {
   readonly nodeId: string
 }
 
+export interface RecoveryNodeProtocolHelloAck {
+  readonly version: typeof RECOVERY_NODE_PROTOCOL_VERSION
+  readonly type: 'hello_ack'
+  readonly nodeId: string
+}
+
 export interface RecoveryNodeProtocolInspectNodeRequest {
   readonly version: typeof RECOVERY_NODE_PROTOCOL_VERSION
   readonly type: 'request'
@@ -82,4 +88,4 @@ export interface RecoveryNodeProtocolErrorResponse {
 }
 
 export type RecoveryNodeProtocolResponse = RecoveryNodeProtocolSuccessResponse | RecoveryNodeProtocolErrorResponse
-export type RecoveryNodeProtocolMessage = RecoveryNodeProtocolHello | RecoveryNodeProtocolRequest | RecoveryNodeProtocolResponse
+export type RecoveryNodeProtocolMessage = RecoveryNodeProtocolHello | RecoveryNodeProtocolHelloAck | RecoveryNodeProtocolRequest | RecoveryNodeProtocolResponse

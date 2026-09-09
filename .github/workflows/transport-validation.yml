@@ -24,6 +24,46 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Generate ephemeral mutual-TLS test certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/recovery-tls"
+          mkdir -p "$dir"
+
+          openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+            -subj '/CN=Recovery Test CA' \
+            -keyout "$dir/ca.key" -out "$dir/ca.crt"
+
+          openssl req -newkey rsa:2048 -nodes -sha256 \
+            -subj '/CN=control.test' \
+            -keyout "$dir/control.key" -out "$dir/control.csr"
+          cat > "$dir/control.ext" <<'EOF'
+          subjectAltName=DNS:control.test,IP:127.0.0.1
+          extendedKeyUsage=serverAuth
+          EOF
+          openssl x509 -req -sha256 -days 1 \
+            -in "$dir/control.csr" -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAcreateserial \
+            -extfile "$dir/control.ext" -out "$dir/control.crt"
+
+          openssl req -newkey rsa:2048 -nodes -sha256 \
+            -subj '/CN=node-a' \
+            -keyout "$dir/node.key" -out "$dir/node.csr"
+          printf 'extendedKeyUsage=clientAuth\n' > "$dir/node.ext"
+          openssl x509 -req -sha256 -days 1 \
+            -in "$dir/node.csr" -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAserial "$dir/ca.srl" \
+            -extfile "$dir/node.ext" -out "$dir/node.crt"
+
+          openssl req -newkey rsa:2048 -nodes -sha256 \
+            -subj '/CN=node-a-rotated' \
+            -keyout "$dir/node-rotated.key" -out "$dir/node-rotated.csr"
+          openssl x509 -req -sha256 -days 1 \
+            -in "$dir/node-rotated.csr" -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAserial "$dir/ca.srl" \
+            -extfile "$dir/node.ext" -out "$dir/node-rotated.crt"
+
+          chmod 600 "$dir"/*.key
+          echo "RECOVERY_TLS_TEST_CERT_DIR=$dir" >> "$GITHUB_ENV"
+
       - name: Run strict checks and tests
         run: npm run check
 

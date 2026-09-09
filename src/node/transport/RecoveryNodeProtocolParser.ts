@@ -6,6 +6,7 @@ import {
   type RecoveryNodeProtocolErrorCode,
   type RecoveryNodeProtocolErrorResponse,
   type RecoveryNodeProtocolHello,
+  type RecoveryNodeProtocolHelloAck,
   type RecoveryNodeProtocolMessage,
   type RecoveryNodeProtocolOperation,
   type RecoveryNodeProtocolRequest,
@@ -34,9 +35,7 @@ export class RecoveryNodeProtocolParser {
     if (Buffer.byteLength(line, 'utf8') > RECOVERY_NODE_PROTOCOL_MAX_MESSAGE_BYTES) {
       throw new Error(`Recovery node protocol message exceeds ${RECOVERY_NODE_PROTOCOL_MAX_MESSAGE_BYTES} bytes`)
     }
-    if (line.includes('\n') || line.includes('\r')) {
-      throw new Error('Recovery node protocol parser accepts exactly one framed line')
-    }
+    if (line.includes('\n') || line.includes('\r')) throw new Error('Recovery node protocol parser accepts exactly one framed line')
 
     let parsed: unknown
     try {
@@ -52,26 +51,26 @@ export class RecoveryNodeProtocolParser {
 
     const type = record['type']
     if (type === 'hello') return this.parseHello(record)
+    if (type === 'hello_ack') return this.parseHelloAck(record)
     if (type === 'request') return this.parseRequest(record)
     if (type === 'response') return this.parseResponse(record)
-    throw new Error('Recovery node protocol type must be hello, request, or response')
+    throw new Error('Recovery node protocol type must be hello, hello_ack, request, or response')
   }
 
   private parseHello(record: Readonly<Record<string, unknown>>): RecoveryNodeProtocolHello {
     this.requireExactKeys(record, ['version', 'type', 'nodeId'], 'Recovery node hello')
-    return {
-      version: RECOVERY_NODE_PROTOCOL_VERSION,
-      type: 'hello',
-      nodeId: this.requireIdentifier(record['nodeId'], 'Recovery node hello nodeId'),
-    }
+    return { version: RECOVERY_NODE_PROTOCOL_VERSION, type: 'hello', nodeId: this.requireIdentifier(record['nodeId'], 'Recovery node hello nodeId') }
+  }
+
+  private parseHelloAck(record: Readonly<Record<string, unknown>>): RecoveryNodeProtocolHelloAck {
+    this.requireExactKeys(record, ['version', 'type', 'nodeId'], 'Recovery node hello acknowledgement')
+    return { version: RECOVERY_NODE_PROTOCOL_VERSION, type: 'hello_ack', nodeId: this.requireIdentifier(record['nodeId'], 'Recovery node hello acknowledgement nodeId') }
   }
 
   private parseRequest(record: Readonly<Record<string, unknown>>): RecoveryNodeProtocolRequest {
     const id = this.requireIdentifier(record['id'], 'Recovery node request id')
     const operation = record['operation']
-    if (typeof operation !== 'string' || !OPERATIONS.has(operation as RecoveryNodeProtocolOperation)) {
-      throw new Error('Recovery node request operation is not supported')
-    }
+    if (typeof operation !== 'string' || !OPERATIONS.has(operation as RecoveryNodeProtocolOperation)) throw new Error('Recovery node request operation is not supported')
 
     if (operation === 'inspect_service' || operation === 'restart_service') {
       this.requireExactKeys(record, ['version', 'type', 'id', 'operation', 'serviceId'], `Recovery node ${operation} request`)
@@ -92,22 +91,14 @@ export class RecoveryNodeProtocolParser {
     const ok = record['ok']
     if (ok === true) {
       this.requireExactKeys(record, ['version', 'type', 'id', 'ok', 'result'], 'Recovery node success response')
-      return {
-        version: RECOVERY_NODE_PROTOCOL_VERSION,
-        type: 'response',
-        id,
-        ok: true,
-        result: record['result'],
-      }
+      return { version: RECOVERY_NODE_PROTOCOL_VERSION, type: 'response', id, ok: true, result: record['result'] }
     }
     if (ok === false) {
       this.requireExactKeys(record, ['version', 'type', 'id', 'ok', 'error'], 'Recovery node error response')
       const error = this.requireRecord(record['error'], 'Recovery node response error')
       this.requireExactKeys(error, ['code', 'message'], 'Recovery node response error')
       const code = error['code']
-      if (typeof code !== 'string' || !ERROR_CODES.has(code as RecoveryNodeProtocolErrorCode)) {
-        throw new Error('Recovery node response error code is not supported')
-      }
+      if (typeof code !== 'string' || !ERROR_CODES.has(code as RecoveryNodeProtocolErrorCode)) throw new Error('Recovery node response error code is not supported')
       return {
         version: RECOVERY_NODE_PROTOCOL_VERSION,
         type: 'response',
@@ -127,9 +118,7 @@ export class RecoveryNodeProtocolParser {
   }
 
   private requireText(value: unknown, label: string, maximumLength: number): string {
-    if (typeof value !== 'string' || value.length === 0 || value.trim() !== value) {
-      throw new Error(`${label} must be a non-blank string without surrounding whitespace`)
-    }
+    if (typeof value !== 'string' || value.length === 0 || value.trim() !== value) throw new Error(`${label} must be a non-blank string without surrounding whitespace`)
     if (value.length > maximumLength) throw new Error(`${label} exceeds ${maximumLength} characters`)
     if (/[\u0000-\u001f\u007f]/u.test(value)) throw new Error(`${label} must not contain control characters`)
     return value
@@ -142,12 +131,7 @@ export class RecoveryNodeProtocolParser {
 
   private requireExactKeys(record: Readonly<Record<string, unknown>>, allowedKeys: readonly string[], label: string): void {
     const allowed = new Set(allowedKeys)
-    const keys = Object.keys(record)
-    for (const key of keys) {
-      if (!allowed.has(key)) throw new Error(`${label} contains unsupported field: ${key}`)
-    }
-    for (const key of allowedKeys) {
-      if (!Object.prototype.hasOwnProperty.call(record, key)) throw new Error(`${label} is missing required field: ${key}`)
-    }
+    for (const key of Object.keys(record)) if (!allowed.has(key)) throw new Error(`${label} contains unsupported field: ${key}`)
+    for (const key of allowedKeys) if (!Object.prototype.hasOwnProperty.call(record, key)) throw new Error(`${label} is missing required field: ${key}`)
   }
 }
