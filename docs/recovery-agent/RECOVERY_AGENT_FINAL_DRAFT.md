@@ -29,6 +29,7 @@ Recovery Agent owns:
 - product-specific Strands prompts/parsers/orchestration;
 - human approval protocol, named approval-principal verification, and the local approval socket;
 - product-specific Java durable-state authority and its typed stdio protocol;
+- product-specific outbound node transport, node/control identity binding, reconnect policy, and credential-rotation contract; PKI issuance outside Recovery remains an operator/infrastructure responsibility.
 - demo scenarios and simulation labeling.
 
 Connected systems retain their own responsibilities:
@@ -36,7 +37,6 @@ Connected systems retain their own responsibilities:
 - `@tjxjnoobie/strands-bridge` owns shared Strands lifecycle/MCP integration behavior;
 - Tavall Database owns PostgreSQL/JPA provider mechanics, transaction lifecycle, flush/rollback, and persistence implementation;
 - production service runtimes own their actual service lifecycle;
-- Recovery Agent owns its product-specific outbound node transport, node/control identity binding, reconnect policy, and credential-rotation contract; PKI issuance outside Recovery remains an operator/infrastructure responsibility.
 
 Recovery Agent must not create a general TypeScript database/repository/cache framework, expose normal arbitrary shell execution, or let a model authorize its own recovery action.
 
@@ -426,6 +426,8 @@ Approval/rejection are intentionally absent.
 `recovery-agent demo` is visibly labeled `SIMULATED DEMONSTRATION`. Simulated model/host behavior is not presented as physical production evidence. Elevated plans are never silently auto-approved.
 
 ## Validation Requirements and Current Evidence
+
+Production outbound-mTLS lifecycle evidence was physically validated on head `604d4ede5a4e60eac78c4e58d6346599be72eb3b`. GitHub runs `34413847564` (Secure transport validation), `34413847601` (Recovery validation), and `34413847546` (Fallback validation) all completed successfully. The secure transport run generated a CA, control certificate, original node certificate, and rotated node certificate, then passed the strict Node 22 check/build/package path with 160/160 tests, including deterministic recovery through the session gateway, forced session loss, credential-file rotation/reconnect, fingerprint-overlap acceptance, retired-credential fail-closed behavior, and private-key file safety checks.
 
 Audited retention implementation head: `1c32e9a591b067de849130d14f7544f406082a32`.
 
