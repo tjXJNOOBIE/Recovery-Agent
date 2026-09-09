@@ -28,6 +28,8 @@ export class RecoveryNodeOutboundTlsSession {
   private readonly parser = new RecoveryNodeProtocolParser()
   private socket: TLSSocket | undefined
   private connected = false
+  private disconnectPromise: Promise<void> | undefined
+  private resolveDisconnected: (() => void) | undefined
 
   public constructor(options: RecoveryNodeOutboundTlsSessionOptions, runtime: INodeServiceRuntime, resourceProbe?: INodeResourceProbe, certificateProbe?: INodeCertificateProbe) {
     const nodeId = options.nodeId.trim()
@@ -48,8 +50,13 @@ export class RecoveryNodeOutboundTlsSession {
     return this.connected && this.socket !== undefined && !this.socket.destroyed
   }
 
+  public waitForDisconnect(): Promise<void> {
+    return this.disconnectPromise ?? Promise.resolve()
+  }
+
   public connect(): Promise<void> {
     if (this.socket !== undefined) return Promise.reject(new Error(`Recovery node ${this.options.nodeId} outbound TLS session is already started`))
+    this.disconnectPromise = new Promise<void>((resolve) => { this.resolveDisconnected = resolve })
 
     return new Promise<void>((resolve, reject) => {
       const framer = new RecoveryNodeLineFramer()
@@ -76,6 +83,7 @@ export class RecoveryNodeOutboundTlsSession {
         this.connected = false
         if (this.socket === socket) this.socket = undefined
         if (!socket.destroyed) socket.destroy()
+        this.signalDisconnected()
         reject(error)
       }
       const timeout = setTimeout(() => failBeforeEnrollment(new Error(`Recovery node ${this.options.nodeId} TLS enrollment timed out`)), this.options.enrollmentTimeoutMs ?? 5_000)
@@ -129,6 +137,7 @@ export class RecoveryNodeOutboundTlsSession {
     const socket = this.socket
     this.socket = undefined
     this.connected = false
+    this.signalDisconnected()
     if (socket === undefined || socket.destroyed) return
     socket.destroy()
   }
@@ -143,6 +152,13 @@ export class RecoveryNodeOutboundTlsSession {
     if (this.socket !== socket) return
     this.socket = undefined
     this.connected = false
+    this.signalDisconnected()
     if (!socket.destroyed) socket.destroy()
+  }
+
+  private signalDisconnected(): void {
+    const resolve = this.resolveDisconnected
+    this.resolveDisconnected = undefined
+    if (resolve !== undefined) resolve()
   }
 }

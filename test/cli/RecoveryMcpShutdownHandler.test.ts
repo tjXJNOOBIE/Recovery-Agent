@@ -16,6 +16,7 @@ test('attemptsEveryDurableMcpCleanupInOrderAfterEarlierFailure', async () => {
   const order: string[] = []
   const mcpError = new Error('mcp close failed')
   const durabilityError = new Error('durability close failed')
+  const transportError = new Error('transport close failed')
   const handler = new RecoveryMcpShutdownHandler()
 
   await assert.rejects(
@@ -25,19 +26,20 @@ test('attemptsEveryDurableMcpCleanupInOrderAfterEarlierFailure', async () => {
       approvalServer: closeable('approval', order),
       durability: closeable('durability', order, durabilityError),
       control: closeable('control', order),
+      transportServer: closeable('transport', order, transportError),
     }),
     (error: unknown) => {
       assert.ok(error instanceof AggregateError)
-      assert.deepEqual(error.errors, [mcpError, durabilityError])
+      assert.deepEqual(error.errors, [mcpError, durabilityError, transportError])
       assert.equal(error.cause, mcpError)
       return true
     },
   )
 
-  assert.deepEqual(order, ['mcp', 'watches', 'approval', 'durability', 'control'])
+  assert.deepEqual(order, ['mcp', 'watches', 'approval', 'durability', 'control', 'transport'])
 })
 
-test('omitsOptionalApprovalAndDurabilityResourcesWithoutChangingShutdownOrder', async () => {
+test('omitsOptionalApprovalDurabilityAndTransportResourcesWithoutChangingShutdownOrder', async () => {
   const order: string[] = []
   await new RecoveryMcpShutdownHandler().close({
     mcpServer: closeable('mcp', order),
