@@ -1,0 +1,64 @@
+{
+  "name": "@tjxjnoobie/recovery-agent",
+  "version": "0.1.0",
+  "description": "A Strands-powered control-host agent for bounded machine and service recovery.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "recovery-agent": "./dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \".test-dist/test/**/*.test.js\"",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "demo": "npm run build && node dist/cli/main.js demo",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "@tjxjnoobie/strands-bridge": "github:tjXJNOOBIE/strands-bridge#69d27b147ee4f8bf0bfba43cbd0668a1ca4dd868",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tjXJNOOBIE/Recovery-Agent.git"
+  },
+  "homepage": "https://github.com/tjXJNOOBIE/Recovery-Agent#readme",
+  "bugs": {
+    "url": "https://github.com/tjXJNOOBIE/Recovery-Agent/issues"
+  },
+  "keywords": [
+    "strands-agents",
+    "agents",
+    "mcp",
+    "recovery-agent",
+    "systemd",
+    "self-healing"
+  ]
+}
