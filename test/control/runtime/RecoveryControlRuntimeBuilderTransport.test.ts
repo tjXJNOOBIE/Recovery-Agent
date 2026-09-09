@@ -13,7 +13,7 @@ class FakeGateway implements INodeAgentGateway {
   public constructor(public readonly nodeId: string) {}
   public async inspectNode(): Promise<NodeSnapshot> { return { nodeId: this.nodeId, observedAt: new Date(0).toISOString(), services: [] } }
   public async inspectService(serviceId: string): Promise<ServiceSnapshot> { return { nodeId: this.nodeId, serviceId, lifecycleState: 'running', healthy: true, detail: 'ok', observedAt: new Date(0).toISOString(), restartCount: 0 } }
-  public async restartService(serviceId: string): Promise<ServiceActionResult> { return { nodeId: this.nodeId, serviceId, action: 'restart', succeeded: true, detail: 'ok', observedAt: new Date(0).toISOString(), service: await this.inspectService(serviceId) } }
+  public async restartService(serviceId: string): Promise<ServiceActionResult> { return { accepted: true, action: 'restart', message: 'ok', snapshot: await this.inspectService(serviceId) } }
   public async close(): Promise<void> {}
 }
 
@@ -47,6 +47,6 @@ test('suppliedGatewaysMustExactlyCoverConfiguredNodeIdentities', async () => {
   assert.throws(() => builder().build(outboundConfig(['node-a']), [new FakeGateway('node-a'), new FakeGateway('node-a')]), /Duplicate Recovery node gateway/)
 
   const runtime = builder().build(outboundConfig(['node-b', 'node-a']), [new FakeGateway('node-a'), new FakeGateway('node-b')])
-  assert.deepEqual((await runtime.fleetStatus()).map((node) => node.nodeId), ['node-b', 'node-a'])
+  assert.deepEqual((await runtime.fleetStatus()).nodes.map((node) => node.nodeId), ['node-b', 'node-a'])
   await runtime.close()
 })
