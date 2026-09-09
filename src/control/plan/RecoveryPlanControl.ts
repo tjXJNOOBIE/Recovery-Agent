@@ -11,6 +11,10 @@ export class RecoveryPlanControl {
     this.approvalHandler = approvalHandler
   }
 
+  public restore(plans: readonly RecoveryPlan[]): void {
+    this.planState.restore(plans)
+  }
+
   public list(): readonly RecoveryPlan[] {
     return this.planState.list()
   }
@@ -27,11 +31,15 @@ export class RecoveryPlanControl {
     return this.planState.transition(planId, 'pending_approval', 'superseded', outcome)
   }
 
+  public failApprovedAfterRestart(planId: string, outcome: string): RecoveryPlan {
+    return this.planState.transition(planId, 'approved', 'failed', outcome)
+  }
+
   public approve(planId: string, approvalToken: string): Promise<RecoveryPlanApprovalResult> {
     return this.approvalHandler.approveAndExecute(planId, approvalToken)
   }
 
-  public reject(planId: string, approvalToken: string, reason: string): RecoveryPlan {
+  public reject(planId: string, approvalToken: string, reason: string): Promise<RecoveryPlan> {
     return this.approvalHandler.reject(planId, approvalToken, reason)
   }
 }

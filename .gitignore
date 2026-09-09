@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .test-dist/
+state-authority-runtime/
 .env
 .env.*
 !.env.example

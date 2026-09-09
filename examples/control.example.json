@@ -1,4 +1,20 @@
 {
+  "approvalPrincipals": [
+    {
+      "id": "primary-operator",
+      "tokenEnvironmentVariable": "RECOVERY_APPROVAL_TOKEN_PRIMARY",
+      "expiresAt": "2027-01-01T00:00:00Z"
+    },
+    {
+      "id": "retired-operator",
+      "tokenEnvironmentVariable": "RECOVERY_APPROVAL_TOKEN_RETIRED",
+      "revoked": true
+    }
+  ],
+  "durableRetention": {
+    "terminalHistoryDays": 90,
+    "terminalHistoryPerTarget": 200
+  },
   "nodes": [
     {
       "id": "production-east-01",

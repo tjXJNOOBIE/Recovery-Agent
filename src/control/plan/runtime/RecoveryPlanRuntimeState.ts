@@ -30,6 +30,26 @@ export class RecoveryPlanRuntimeState {
     return plan
   }
 
+  public restore(plans: readonly RecoveryPlan[]): void {
+    const ids = new Set<string>()
+    const pendingTargets = new Set<string>()
+    const restored = plans.map((plan, index) => {
+      const id = plan.id.trim()
+      if (id.length === 0) throw new Error(`Recovery plan[${index}] id must be non-blank`)
+      if (ids.has(id)) throw new Error(`Duplicate recovery plan id during restore: ${id}`)
+      ids.add(id)
+      if (plan.status === 'pending_approval') {
+        const target = `${plan.nodeId}/${plan.serviceId}`
+        if (pendingTargets.has(target)) {
+          throw new Error(`Multiple pending recovery plans cannot be restored for ${target}`)
+        }
+        pendingTargets.add(target)
+      }
+      return { ...plan, action: { ...plan.action } }
+    })
+    this.plans = restored
+  }
+
   public list(): readonly RecoveryPlan[] {
     return this.plans
   }

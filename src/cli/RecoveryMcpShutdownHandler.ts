@@ -2,18 +2,20 @@ export interface RecoveryMcpShutdownTargets {
   readonly mcpServer: { close(): Promise<void> }
   readonly watches: { close(): Promise<void> }
   readonly approvalServer?: { close(): Promise<void> }
+  readonly durability?: { close(): Promise<void> }
   readonly control: { close(): Promise<void> }
 }
 
 export class RecoveryMcpShutdownHandler {
   public async close(targets: RecoveryMcpShutdownTargets): Promise<void> {
     const failures: unknown[] = []
-    const operations: readonly (() => Promise<void>)[] = [
+    const operations: Array<() => Promise<void>> = [
       () => targets.mcpServer.close(),
       () => targets.watches.close(),
-      ...(targets.approvalServer === undefined ? [] : [() => targets.approvalServer!.close()]),
-      () => targets.control.close(),
     ]
+    if (targets.approvalServer !== undefined) operations.push(() => targets.approvalServer!.close())
+    if (targets.durability !== undefined) operations.push(() => targets.durability!.close())
+    operations.push(() => targets.control.close())
 
     for (const close of operations) {
       try {
