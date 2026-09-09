@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync, type Stats } from 'node:fs'
 
 export interface RecoveryTlsMaterialPaths {
   readonly certificateFile: string
@@ -37,7 +37,7 @@ export class RecoveryTlsMaterialReader {
     return readFileSync(path)
   }
 
-  private requireRegularFile(path: string, label: string): ReturnType<typeof lstatSync> {
+  private requireRegularFile(path: string, label: string): Stats {
     const normalized = path.trim()
     if (normalized.length === 0) throw new Error(`${label} path must be non-blank`)
     const stat = lstatSync(normalized)
