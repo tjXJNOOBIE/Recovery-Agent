@@ -34,6 +34,9 @@ import { NodeCertificateProbe } from '../node/certificate/NodeCertificateProbe.j
 import { LinuxNodeResourceProbe } from '../node/health/LinuxNodeResourceProbe.js'
 import { NodeAgentHttpServer } from '../node/http/NodeAgentHttpServer.js'
 import { SystemdNodeServiceRuntime } from '../node/systemd/SystemdNodeServiceRuntime.js'
+import { RecoveryControlTlsSessionServer } from '../node/transport/RecoveryControlTlsSessionServer.js'
+import { RecoveryNodeOutboundTlsLifecycle } from '../node/transport/RecoveryNodeOutboundTlsLifecycle.js'
+import { RecoveryTlsMaterialReader } from '../node/transport/RecoveryTlsMaterialReader.js'
 import { RecoveryAgentCliHandler } from './RecoveryAgentCliHandler.js'
 import { RecoveryMcpShutdownHandler } from './RecoveryMcpShutdownHandler.js'
 
@@ -75,6 +78,19 @@ function resolveStateAuthorityCommand(): string | undefined {
   return bundled
 }
 
+async function waitForTermination(close: () => Promise<void>): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    let closing = false
+    const stop = (): void => {
+      if (closing) return
+      closing = true
+      void close().then(resolvePromise, reject)
+    }
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+  })
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0]
@@ -94,21 +110,38 @@ async function main(): Promise<void> {
 
   if (command === 'node') {
     const config = new RecoveryNodeConfigReader().read(requireArgument(args, 1, 'node config path'))
-    const token = process.env[config.tokenEnvironmentVariable]?.trim()
-    if (token === undefined || token.length < 16) throw new Error(`Environment variable ${config.tokenEnvironmentVariable} must contain a node token of at least 16 characters`)
-    const server = new NodeAgentHttpServer(
-      new SystemdNodeServiceRuntime(config.nodeId, config.services),
-      token,
-      new LinuxNodeResourceProbe(),
-      new NodeCertificateProbe(config.nodeId, config.certificates),
-    )
-    const address = await server.listen(config.listenPort, config.listenHost)
-    process.stderr.write(`Recovery node ${config.nodeId} listening on ${address.baseUrl}\n`)
-    await new Promise<void>((resolvePromise) => {
-      const stop = (): void => { void server.close().finally(resolvePromise) }
-      process.once('SIGINT', stop)
-      process.once('SIGTERM', stop)
-    })
+    const runtime = new SystemdNodeServiceRuntime(config.nodeId, config.services)
+    const resourceProbe = new LinuxNodeResourceProbe()
+    const certificateProbe = new NodeCertificateProbe(config.nodeId, config.certificates)
+
+    if (config.transport.mode === 'loopback_http') {
+      const token = process.env[config.transport.tokenEnvironmentVariable]?.trim()
+      if (token === undefined || token.length < 16) throw new Error(`Environment variable ${config.transport.tokenEnvironmentVariable} must contain a node token of at least 16 characters`)
+      const server = new NodeAgentHttpServer(runtime, token, resourceProbe, certificateProbe)
+      const address = await server.listen(config.transport.listenPort, config.transport.listenHost)
+      process.stderr.write(`Recovery node ${config.nodeId} loopback compatibility listener active on ${address.baseUrl}\n`)
+      await waitForTermination(() => server.close())
+      return
+    }
+
+    const transport = config.transport
+    const lifecycle = new RecoveryNodeOutboundTlsLifecycle({
+      nodeId: config.nodeId,
+      host: transport.host,
+      port: transport.port,
+      serverName: transport.serverName,
+      certificateFile: transport.certificateFile,
+      privateKeyFile: transport.privateKeyFile,
+      controlCertificateAuthorityFile: transport.controlCertificateAuthorityFile,
+      allowedControlCertificateFingerprints: transport.allowedControlCertificateFingerprints,
+      enrollmentTimeoutMs: transport.enrollmentTimeoutMs,
+      reconnectInitialDelayMs: transport.reconnectInitialDelayMs,
+      reconnectMaximumDelayMs: transport.reconnectMaximumDelayMs,
+      onFailure: (error) => process.stderr.write(`Recovery node ${config.nodeId} outbound TLS connection failed: ${error.message}\n`),
+    }, runtime, resourceProbe, certificateProbe)
+    lifecycle.start()
+    process.stderr.write(`Recovery node ${config.nodeId} running outbound TLS lifecycle to ${transport.host}:${transport.port}\n`)
+    await waitForTermination(() => lifecycle.close())
     return
   }
 
@@ -116,7 +149,26 @@ async function main(): Promise<void> {
     const config = new RecoveryControlConfigReader().read(requireArgument(args, 1, 'control config path'))
     const bootstrap = new StrandsAgentRuntimeBootstrap()
     const durabilityBarrier = new RecoveryDurabilityCheckpointBarrier()
-    const control = new RecoveryControlRuntimeBuilder(bootstrap, process.env, durabilityBarrier).build(config)
+    const runtimeBuilder = new RecoveryControlRuntimeBuilder(bootstrap, process.env, durabilityBarrier)
+
+    let transportServer: RecoveryControlTlsSessionServer | undefined
+    if (config.transport.mode === 'outbound_tls') {
+      const material = new RecoveryTlsMaterialReader().read({
+        certificateFile: config.transport.certificateFile,
+        privateKeyFile: config.transport.privateKeyFile,
+        certificateAuthorityFile: config.transport.clientCertificateAuthorityFile,
+      })
+      transportServer = new RecoveryControlTlsSessionServer({
+        certificate: material.certificate,
+        privateKey: material.privateKey,
+        clientCertificateAuthority: material.certificateAuthority,
+        nodes: config.nodes.map((node) => ({ nodeId: node.id, allowedCertificateFingerprints: node.allowedCertificateFingerprints })),
+        requestTimeoutMs: config.transport.requestTimeoutMs,
+        enrollmentTimeoutMs: config.transport.enrollmentTimeoutMs,
+      })
+    }
+
+    const control = runtimeBuilder.build(config, transportServer === undefined ? undefined : config.nodes.map((node) => transportServer!.gateway(node.id)))
     const semanticTargets = config.nodes.flatMap((node) => node.services.map((service) => ({ nodeId: node.id, serviceId: service.id })))
     const serviceWatches = new RecoveryWatchService(control, new RecoveryWatchDefinitionBuilder().build(config))
     const nodeWatches = new RecoveryNodeWatchService(control, new RecoveryNodeWatchDefinitionBuilder().build(config))
@@ -141,16 +193,22 @@ async function main(): Promise<void> {
         await durabilityBarrier.checkpoint({
           actor: 'recovery-agent',
           action: 'control_start',
-          summary: `Hydrated durable recovery state at revision ${loaded.revision} before exposing MCP, watches, or approval`,
+          summary: `Hydrated durable recovery state at revision ${loaded.revision} before exposing MCP, watches, approval, or node transport`,
         })
         process.stderr.write(`Recovery durable state authority hydrated revision ${loaded.revision}\n`)
       } catch (error: unknown) {
         const failures: unknown[] = [error]
         try { await durability.close() } catch (closeError: unknown) { failures.push(closeError) }
         try { await control.close() } catch (closeError: unknown) { failures.push(closeError) }
+        if (transportServer !== undefined) try { await transportServer.close() } catch (closeError: unknown) { failures.push(closeError) }
         if (failures.length > 1) throw new AggregateError(failures, 'Recovery durable startup failed and cleanup also failed', { cause: error })
         throw error
       }
+    }
+
+    if (transportServer !== undefined && config.transport.mode === 'outbound_tls') {
+      const address = await transportServer.listen(config.transport.listenPort, config.transport.listenHost)
+      process.stderr.write(`Recovery control outbound TLS listener active on ${address.host}:${address.port}\n`)
     }
 
     const mcpServer = new RecoveryMcpServer(new RecoveryMcpToolRouter(control, watches, semanticWatches, durabilityBarrier))
@@ -177,6 +235,7 @@ async function main(): Promise<void> {
           control,
           ...(approvalServer === undefined ? {} : { approvalServer }),
           ...(durability === undefined ? {} : { durability }),
+          ...(transportServer === undefined ? {} : { transportServer }),
         }
         void new RecoveryMcpShutdownHandler().close(targets).then(resolvePromise, reject)
       }
