@@ -4,7 +4,7 @@ Recovery Agent is a control-host recovery runtime for Linux services. AI stays o
 
 **Agents for Humans track:** Professional
 
-> **Current status:** Draft E2E foundation. Deterministic service recovery, application probes, Linux/node/certificate/deployment watches, Recovery Readiness, semantic service watches, dependency-aware rolling recovery budgets, bounded Strands investigation/planning/critic/postmortem roles, accountable local operator principals, restart-safe schema-v2 control-state durability, and packaged control-host installation are implemented. GitHub fallback validation physically exercises the Node 22 product, Java 25 state authority, PostgreSQL 17 durability, a clean npm consumer install, bundled authority discovery, installed MCP startup, and the labeled demo. Production remote transport, retention/cleanup policy, authorized real-model Recovery validation, broader production actions/adapters, and current-host/Inspector acceptance remain promotion gates.
+> **Current status:** Draft E2E foundation. Deterministic service recovery, application probes, Linux/node/certificate/deployment watches, Recovery Readiness, semantic service watches, dependency-aware rolling recovery budgets, bounded Strands investigation/planning/critic/postmortem roles, accountable local operator principals, restart-safe schema-v2 control-state durability, opt-in terminal-history retention, and packaged control-host installation are implemented. GitHub fallback validation physically exercises the Node 22 product, Java 25 state authority, PostgreSQL 17 durability, a clean npm consumer install, bundled authority discovery, installed MCP startup, and the labeled demo. Production remote transport, authorized real-model Recovery validation, broader production actions/adapters, and current-host/Inspector acceptance remain promotion gates.
 
 ## Runtime shape
 
@@ -45,10 +45,12 @@ control-host human
           -> fresh verification + durable outcome
 
 control-host durability
-  -> strict stdio protocol
-      -> bundled Java 25 Recovery state authority
-          -> Tavall Database
-              -> PostgreSQL
+  -> RecoveryDurableStateCoordinator
+      -> optional terminal-history retention policy
+      -> strict stdio protocol
+          -> bundled Java 25 Recovery state authority
+              -> Tavall Database
+                  -> PostgreSQL
 ```
 
 There is no normal arbitrary-shell recovery surface.
@@ -138,6 +140,29 @@ Deployment markers and stabilization context survive control-host restart, tempo
 
 The authority uses a monotonic application revision separate from Hibernate's internal optimistic-lock version. Stale revisions fail closed, audit history cannot be rewritten or truncated, and local checkpoints are serialized so concurrent Recovery work shares one ordered authority revision stream.
 
+### Durable terminal-history retention
+
+Destructive durable cleanup is **off by default**. Operators may opt in with control-host configuration:
+
+```json
+{
+  "durableRetention": {
+    "terminalHistoryDays": 90,
+    "terminalHistoryPerTarget": 200
+  }
+}
+```
+
+Retention is a Recovery domain policy applied to the candidate schema-v2 snapshot **before every authority commit**. Tavall Database and the Java authority still own persistence mechanics; neither invents Recovery cleanup rules.
+
+The policy may prune only resolved/terminal historical service incidents, their fully terminal plans, resolved node-health incidents, resolved certificate incidents, and resolved deployment incidents. A service incident and all related plans are one referential retention unit, and its age uses the latest terminal timestamp from the incident or any related plan. A unit becomes eligible when it exceeds either the configured age ceiling or the per-target count ceiling.
+
+Unresolved, recovering, dependency-blocked, approval-required, human-required, pending-approval, or approved state is never eligible. Current semantic watch definitions, rolling restart-attempt state, current deployment marker/stabilization causality, and the entire audit history remain durable. If a resolved deployment incident is pruned, only the obsolete incident reference is removed from current deployment state.
+
+Audit history is intentionally never pruned under schema v2. The first successful commit that removes newly eligible history appends a `retention_cleanup` audit event. A failed authority commit records no cleanup as committed, and later checkpoints retry safely without duplicating cleanup audit entries for identities already pruned during that control-host generation.
+
+Retention bounds PostgreSQL authority state immediately. Terminal records already loaded by the current TypeScript process may remain visible in its in-memory inspection surfaces until that process restarts. Every subsequent durable checkpoint re-applies the policy, so those records cannot be resurrected into PostgreSQL. This avoids mutating unrelated live state merely to make historical UI output disappear sooner.
+
 ### Write-ahead and causal mutation safety
 
 Recovery Agent persists mutation intent **before** an external restart is allowed:
@@ -197,6 +222,7 @@ Linux node evidence covers memory, swap, filesystem bytes/inodes, root read-only
 - An approved action whose result is lost during control-host crash becomes execution-outcome-unknown/human-required rather than being replayed blindly.
 - A fresh healthy inspection after uncertain execution resolves the incident without another restart.
 - One unreachable node does not hide the reachable fleet.
+- Durable retention never prunes unresolved/in-doubt state or the append-only audit trail.
 
 ## Strands boundary
 
@@ -251,22 +277,22 @@ Valid approval re-checks dependencies, durably records authenticated approval in
 
 ## Validation evidence
 
-Audited implementation/security head: `e5c0ed4f4bbc001e68986838bdacbe14039f3cc2`.
+Audited retention implementation head: `1c32e9a591b067de849130d14f7544f406082a32`.
 
-GitHub fallback workflow run `34372133147` (#17) passed all three jobs on that implementation head:
+GitHub fallback workflow run `34392908758` (#20) passed all three jobs on that head:
 
-- Node 22 dependency installation, strict typecheck, **122/122 TypeScript tests**, and production build;
+- Node 22.23.2 dependency installation, strict typecheck, **129/129 TypeScript tests**, and production build;
 - Java 25 / Gradle 9.7.1 Recovery state-authority tests through Tavall Database;
 - PostgreSQL 17 service;
 - real npm tarball construction;
 - clean npm consumer installation;
 - bundled authority launcher/JAR verification;
-- installed authority `ping`/`load` against PostgreSQL with schema v2;
+- installed authority `ping`/schema-v2 `load` against PostgreSQL;
 - installed `recovery-agent mcp` startup using bundled-authority resolution;
 - installed `recovery-agent demo` execution;
 - explicit `SIMULATED DEMONSTRATION` label assertion.
 
-The 122-test suite includes regression evidence for v1→v2 normalization, deployment baseline continuity through outage, causal watch-state checkpointing before recovery mutation, semantic-watch transaction ordering, crash/concurrency reconciliation, duplicate active approval secrets, principal-prefix impersonation prevention, expiry/revocation, named-mode legacy bypass prevention, verified approval/rejection audit identity, and zero approved node mutation when durability intent persistence fails.
+The 129-test suite includes regression evidence for v1→v2 normalization, deployment baseline continuity through outage, causal watch-state checkpointing before recovery mutation, semantic-watch transaction ordering, crash/concurrency reconciliation, duplicate active approval secrets, principal-prefix impersonation prevention, expiry/revocation, named-mode legacy bypass prevention, verified approval/rejection audit identity, zero approved node mutation when durability intent persistence fails, opt-in/default-off retention configuration, terminal-only retention, plan/incident referential retention, latest terminal timestamp selection, immutable audit preservation, no cleanup bookkeeping on failed commits, and prevention of durable history resurrection from still-live process memory.
 
 This evidence was produced by GitHub fallback because the current Tavall Cloud environment resolved the exact Recovery source but its physical repository executor failed before process launch with `STALE_VERSION`, and restored service-console sockets were unavailable. No Tavall-local test execution is claimed for this head.
 
@@ -274,7 +300,6 @@ This evidence was produced by GitHub fallback because the current Tavall Cloud e
 
 Recovery Agent remains Draft. Major remaining gates are:
 
-- retention and cleanup policy for durable incident/audit/watch history;
 - physical MCP Inspector/current supported host acceptance;
 - authorized real-model Recovery invocation through `@tjxjnoobie/strands-bridge`;
 - outbound production node enrollment, mTLS, credential rotation, and remote transport;
