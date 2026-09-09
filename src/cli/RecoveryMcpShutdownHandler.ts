@@ -4,6 +4,7 @@ export interface RecoveryMcpShutdownTargets {
   readonly approvalServer?: { close(): Promise<void> }
   readonly durability?: { close(): Promise<void> }
   readonly control: { close(): Promise<void> }
+  readonly transportServer?: { close(): Promise<void> }
 }
 
 export class RecoveryMcpShutdownHandler {
@@ -16,6 +17,7 @@ export class RecoveryMcpShutdownHandler {
     if (targets.approvalServer !== undefined) operations.push(() => targets.approvalServer!.close())
     if (targets.durability !== undefined) operations.push(() => targets.durability!.close())
     operations.push(() => targets.control.close())
+    if (targets.transportServer !== undefined) operations.push(() => targets.transportServer!.close())
 
     for (const close of operations) {
       try {
