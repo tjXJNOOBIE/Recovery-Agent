@@ -2,6 +2,7 @@ import type { IStrandsAgentRuntimeBootstrap } from '@tjxjnoobie/strands-bridge'
 
 import { RecoveryAgentRuntimeConfigBuilder, type RecoveryAgentEnvironment } from '../../agent/config/RecoveryAgentRuntimeConfigBuilder.js'
 import type { RecoveryControlConfig } from '../../config/RecoveryControlConfig.js'
+import type { INodeAgentGateway } from '../../node/gateway/INodeAgentGateway.js'
 import { HttpNodeAgentGateway } from '../../node/http/HttpNodeAgentGateway.js'
 import { ApprovedRecoveryExecutor } from '../approval/ApprovedRecoveryExecutor.js'
 import { RecoveryApprovalVerifier } from '../approval/RecoveryApprovalVerifier.js'
@@ -34,8 +35,8 @@ export class RecoveryControlRuntimeBuilder {
     this.bootstrap = bootstrap; this.environment = environment; this.durabilityCheckpoint = durabilityCheckpoint
   }
 
-  public build(config: RecoveryControlConfig): RecoveryControlRuntime {
-    const gateways = config.nodes.map((node) => new HttpNodeAgentGateway(node.id, node.baseUrl, this.requireSecret(node.tokenEnvironmentVariable)))
+  public build(config: RecoveryControlConfig, suppliedGateways?: readonly INodeAgentGateway[]): RecoveryControlRuntime {
+    const gateways = this.resolveGateways(config, suppliedGateways)
     const policies: ServiceRecoveryPolicy[] = config.nodes.flatMap((node) => node.services.map((service) => ({
       nodeId: node.id,
       serviceId: service.id,
@@ -73,6 +74,35 @@ export class RecoveryControlRuntimeBuilder {
       postmortem,
       this.durabilityCheckpoint,
     )
+  }
+
+  private resolveGateways(config: RecoveryControlConfig, suppliedGateways: readonly INodeAgentGateway[] | undefined): readonly INodeAgentGateway[] {
+    if (suppliedGateways !== undefined) {
+      const byNode = new Map<string, INodeAgentGateway>()
+      for (const gateway of suppliedGateways) {
+        if (byNode.has(gateway.nodeId)) throw new Error(`Duplicate Recovery node gateway for ${gateway.nodeId}`)
+        byNode.set(gateway.nodeId, gateway)
+      }
+      const configured = new Set(config.nodes.map((node) => node.id))
+      for (const nodeId of byNode.keys()) if (!configured.has(nodeId)) throw new Error(`Recovery node gateway ${nodeId} is not present in control config`)
+      return config.nodes.map((node) => {
+        const gateway = byNode.get(node.id)
+        if (gateway === undefined) throw new Error(`Recovery control config node ${node.id} has no supplied gateway`)
+        return gateway
+      })
+    }
+
+    if (config.transport.mode !== 'loopback_http') throw new Error('outbound_tls Recovery control runtime requires explicit session-backed node gateways')
+    return config.nodes.map((node) => new HttpNodeAgentGateway(
+      node.id,
+      this.requireNodeConfigValue(node.baseUrl, `Recovery loopback node ${node.id} baseUrl`),
+      this.requireSecret(this.requireNodeConfigValue(node.tokenEnvironmentVariable, `Recovery loopback node ${node.id} tokenEnvironmentVariable`)),
+    ))
+  }
+
+  private requireNodeConfigValue(value: string | undefined, label: string): string {
+    if (value === undefined || value.trim().length === 0) throw new Error(`${label} must be configured`)
+    return value
   }
 
   private requireSecret(environmentVariable: string): string {
