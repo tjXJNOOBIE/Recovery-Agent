@@ -9,11 +9,12 @@ import {
   type RecoveryOutboundTlsSessionHandle,
 } from '../../../src/node/transport/RecoveryNodeOutboundTlsLifecycle.js'
 import type { INodeServiceRuntime } from '../../../src/node/runtime/INodeServiceRuntime.js'
-import type { NodeSnapshot, ServiceSnapshot } from '../../../src/node/data/ServiceSnapshot.js'
+import type { ServiceSnapshot } from '../../../src/node/data/ServiceSnapshot.js'
 import type { ServiceActionResult } from '../../../src/node/data/ServiceActionResult.js'
 
 class UnusedRuntime implements INodeServiceRuntime {
-  public inspectNode(): Promise<NodeSnapshot> { return Promise.reject(new Error('unused')) }
+  public readonly nodeId = 'node-a'
+  public listServices(): Promise<readonly ServiceSnapshot[]> { return Promise.reject(new Error('unused')) }
   public inspectService(_serviceId: string): Promise<ServiceSnapshot> { return Promise.reject(new Error('unused')) }
   public restartService(_serviceId: string): Promise<ServiceActionResult> { return Promise.reject(new Error('unused')) }
 }
