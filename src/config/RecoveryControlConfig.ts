@@ -4,7 +4,8 @@ export interface RecoveryControlServiceDependencyConfig { readonly nodeId: strin
 export interface RecoveryControlServiceConfig { readonly id: string; readonly restartAllowed: boolean; readonly maxRestartAttempts: number; readonly restartBudgetWindowSeconds: number; readonly watchEnabled: boolean; readonly watchIntervalSeconds: number; readonly dependencies: readonly RecoveryControlServiceDependencyConfig[] }
 export interface RecoveryControlNodeConfig { readonly id: string; readonly baseUrl: string; readonly tokenEnvironmentVariable: string; readonly services: readonly RecoveryControlServiceConfig[] }
 export interface RecoveryApprovalPrincipalConfig { readonly id: string; readonly tokenEnvironmentVariable: string; readonly revoked: boolean; readonly expiresAt?: string }
-export interface RecoveryControlConfig { readonly nodes: readonly RecoveryControlNodeConfig[]; readonly approvalPrincipals: readonly RecoveryApprovalPrincipalConfig[] }
+export interface RecoveryDurableRetentionConfig { readonly terminalHistoryDays: number; readonly terminalHistoryPerTarget: number }
+export interface RecoveryControlConfig { readonly nodes: readonly RecoveryControlNodeConfig[]; readonly approvalPrincipals: readonly RecoveryApprovalPrincipalConfig[]; readonly durableRetention?: RecoveryDurableRetentionConfig }
 
 export class RecoveryControlConfigReader {
   public read(path: string): RecoveryControlConfig {
@@ -13,6 +14,7 @@ export class RecoveryControlConfigReader {
     const nodesValue = record['nodes']
     if (!Array.isArray(nodesValue) || nodesValue.length === 0) throw new Error('control config nodes must be a non-empty array')
 
+    const durableRetention = this.readDurableRetention(record)
     const config: RecoveryControlConfig = {
       nodes: nodesValue.map((value, nodeIndex) => {
         const node = this.requireRecord(value, `nodes[${nodeIndex}]`)
@@ -38,10 +40,21 @@ export class RecoveryControlConfigReader {
         }
       }),
       approvalPrincipals: this.readApprovalPrincipals(record),
+      ...(durableRetention === undefined ? {} : { durableRetention }),
     }
 
     this.validateTopology(config)
     return config
+  }
+
+  private readDurableRetention(record: Readonly<Record<string, unknown>>): RecoveryDurableRetentionConfig | undefined {
+    const value = record['durableRetention']
+    if (value === undefined) return undefined
+    const retention = this.requireRecord(value, 'control config durableRetention')
+    return {
+      terminalHistoryDays: this.requirePositiveInteger(retention, 'terminalHistoryDays'),
+      terminalHistoryPerTarget: this.requirePositiveInteger(retention, 'terminalHistoryPerTarget'),
+    }
   }
 
   private readApprovalPrincipals(record: Readonly<Record<string, unknown>>): readonly RecoveryApprovalPrincipalConfig[] {
@@ -125,5 +138,6 @@ export class RecoveryControlConfigReader {
   private requireBoolean(record: Readonly<Record<string, unknown>>, key: string): boolean { const value = record[key]; if (typeof value !== 'boolean') throw new Error(`${key} must be boolean`); return value }
   private optionalBoolean(record: Readonly<Record<string, unknown>>, key: string): boolean | undefined { const value = record[key]; if (value === undefined) return undefined; if (typeof value !== 'boolean') throw new Error(`${key} must be boolean when provided`); return value }
   private requireNonNegativeInteger(record: Readonly<Record<string, unknown>>, key: string): number { const value = record[key]; if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) throw new Error(`${key} must be a non-negative integer`); return value }
+  private requirePositiveInteger(record: Readonly<Record<string, unknown>>, key: string): number { const value = this.requireNonNegativeInteger(record, key); if (value === 0) throw new Error(`${key} must be a positive integer`); return value }
   private optionalPositiveInteger(record: Readonly<Record<string, unknown>>, key: string): number | undefined { const value = record[key]; if (value === undefined) return undefined; if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) throw new Error(`${key} must be a positive integer when provided`); return value }
 }

@@ -12,6 +12,7 @@ import { RecoveryApprovalSocketClient } from '../control/approval/socket/Recover
 import { RecoveryApprovalSocketPathResolver } from '../control/approval/socket/RecoveryApprovalSocketPathResolver.js'
 import { RecoveryApprovalSocketServer } from '../control/approval/socket/RecoveryApprovalSocketServer.js'
 import { RecoveryDurabilityCheckpointBarrier } from '../control/durability/RecoveryDurabilityCheckpointBarrier.js'
+import { RecoveryDurableRetentionService } from '../control/durability/RecoveryDurableRetentionService.js'
 import { RecoveryDurableStateCoordinator } from '../control/durability/RecoveryDurableStateCoordinator.js'
 import { RecoveryStateAuthorityProcessClient } from '../control/durability/RecoveryStateAuthorityProcessClient.js'
 import { RecoveryControlRuntimeBuilder } from '../control/runtime/RecoveryControlRuntimeBuilder.js'
@@ -90,12 +91,13 @@ async function main(): Promise<void> {
     const semanticParser = new RecoverySemanticWatchParser(semanticTargets)
     const semanticCompiler = new StrandsRecoverySemanticWatchCompiler(bootstrap, new RecoveryAgentRuntimeConfigBuilder(process.env), semanticTargets, semanticParser)
     const semanticWatches = new RecoverySemanticWatchService(semanticCompiler, serviceWatches, semanticTargets)
+    const retention = config.durableRetention === undefined ? undefined : new RecoveryDurableRetentionService(config.durableRetention)
 
     let durability: RecoveryDurableStateCoordinator | undefined
     const authorityCommand = resolveStateAuthorityCommand()
     if (authorityCommand !== undefined) {
       const authority = await RecoveryStateAuthorityProcessClient.start({ command: authorityCommand })
-      durability = new RecoveryDurableStateCoordinator(authority, control, semanticWatches, Date.now, watches)
+      durability = new RecoveryDurableStateCoordinator(authority, control, semanticWatches, Date.now, watches, retention)
       try {
         const loaded = await durability.hydrate(); durabilityBarrier.bind(durability)
         await durabilityBarrier.checkpoint({ actor: 'recovery-agent', action: 'control_start', summary: `Hydrated durable recovery state at revision ${loaded.revision} before exposing MCP, watches, or approval` })

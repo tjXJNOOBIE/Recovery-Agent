@@ -9,6 +9,10 @@ import type {
   RecoveryDurableStateResult,
   RecoveryDurableWatchState,
 } from './RecoveryDurableState.js'
+import {
+  RecoveryDurableRetentionService,
+  type RecoveryDurableRetentionRemoval,
+} from './RecoveryDurableRetentionService.js'
 
 export interface RecoveryDurableControlSurface {
   restoreDurableState(state: RecoveryControlDurableState): void
@@ -52,6 +56,8 @@ export class RecoveryDurableStateCoordinator {
   private readonly semanticWatches: RecoveryDurableSemanticWatchSurface
   private readonly clock: RecoveryDurableClock
   private readonly watchState: RecoveryDurableWatchStateSurface | undefined
+  private readonly retention: RecoveryDurableRetentionService | undefined
+  private readonly committedPrunedHistoryKeys = new Set<string>()
   private revision = 0
   private audit: readonly RecoveryDurableAuditEntry[] = []
   private hydrated = false
@@ -63,12 +69,14 @@ export class RecoveryDurableStateCoordinator {
     semanticWatches: RecoveryDurableSemanticWatchSurface,
     clock: RecoveryDurableClock = Date.now,
     watchState?: RecoveryDurableWatchStateSurface,
+    retention?: RecoveryDurableRetentionService,
   ) {
     this.authority = authority
     this.control = control
     this.semanticWatches = semanticWatches
     this.clock = clock
     this.watchState = watchState
+    this.retention = retention
   }
 
   public async hydrate(): Promise<RecoveryDurableStateResult> {
@@ -96,20 +104,7 @@ export class RecoveryDurableStateCoordinator {
 
   public currentSnapshot(): RecoveryDurableSnapshot {
     this.requireHydrated()
-    const controlState = this.control.exportDurableState()
-    const watchState = this.watchState?.exportDurableState() ?? EMPTY_WATCH_STATE
-    return {
-      schemaVersion: 2,
-      incidents: controlState.incidents,
-      plans: controlState.plans,
-      semanticWatches: this.semanticWatches.list(),
-      restartAttempts: controlState.restartAttempts,
-      nodeHealthIncidents: watchState.nodeHealthIncidents,
-      certificateIncidents: watchState.certificateIncidents,
-      deploymentStates: watchState.deploymentStates,
-      deploymentIncidents: watchState.deploymentIncidents,
-      audit: this.audit,
-    }
+    return this.buildCandidateSnapshot(this.audit)
   }
 
   public checkpoint(auditRequest?: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<RecoveryDurableStateResult> {
@@ -123,9 +118,39 @@ export class RecoveryDurableStateCoordinator {
 
   private async performCheckpoint(auditRequest?: RecoveryDurableAuditRequest, overrides?: RecoveryDurableCheckpointOverrides): Promise<RecoveryDurableStateResult> {
     const candidateAudit = auditRequest === undefined ? this.audit : [...this.audit, this.createAuditEntry(auditRequest)]
+    let candidate = this.buildCandidateSnapshot(candidateAudit, overrides)
+    let newlyPruned: RecoveryDurableRetentionRemoval | undefined
+
+    if (this.retention !== undefined) {
+      const retentionResult = this.retention.apply(candidate, this.now())
+      newlyPruned = this.filterNewRetention(retentionResult.removal)
+      candidate = retentionResult.snapshot
+      if (RecoveryDurableRetentionService.removalCount(newlyPruned) > 0) {
+        candidate = {
+          ...candidate,
+          audit: [...candidate.audit, this.createAuditEntry({
+            actor: 'recovery-agent',
+            action: 'retention_cleanup',
+            summary: this.retentionSummary(newlyPruned),
+          })],
+        }
+      }
+    }
+
+    const committed = await this.authority.commit(this.revision, candidate)
+    this.revision = committed.revision
+    this.audit = committed.snapshot.audit.map((entry) => ({ ...entry }))
+    if (newlyPruned !== undefined) this.rememberCommittedRetention(newlyPruned)
+    return committed
+  }
+
+  private buildCandidateSnapshot(
+    audit: readonly RecoveryDurableAuditEntry[],
+    overrides?: RecoveryDurableCheckpointOverrides,
+  ): RecoveryDurableSnapshot {
     const controlState = this.control.exportDurableState()
     const watchState = this.watchState?.exportDurableState() ?? EMPTY_WATCH_STATE
-    const candidate: RecoveryDurableSnapshot = {
+    return {
       schemaVersion: 2,
       incidents: controlState.incidents,
       plans: controlState.plans,
@@ -135,22 +160,49 @@ export class RecoveryDurableStateCoordinator {
       certificateIncidents: watchState.certificateIncidents,
       deploymentStates: watchState.deploymentStates,
       deploymentIncidents: watchState.deploymentIncidents,
-      audit: candidateAudit,
+      audit,
     }
-    const committed = await this.authority.commit(this.revision, candidate)
-    this.revision = committed.revision
-    this.audit = committed.snapshot.audit.map((entry) => ({ ...entry }))
-    return committed
+  }
+
+  private filterNewRetention(removal: RecoveryDurableRetentionRemoval): RecoveryDurableRetentionRemoval {
+    return {
+      control: {
+        incidentIds: removal.control.incidentIds.filter((id) => !this.committedPrunedHistoryKeys.has(`incident:${id}`)),
+        planIds: removal.control.planIds.filter((id) => !this.committedPrunedHistoryKeys.has(`plan:${id}`)),
+      },
+      watches: {
+        nodeHealthIncidentIds: removal.watches.nodeHealthIncidentIds.filter((id) => !this.committedPrunedHistoryKeys.has(`node:${id}`)),
+        certificateIncidentIds: removal.watches.certificateIncidentIds.filter((id) => !this.committedPrunedHistoryKeys.has(`certificate:${id}`)),
+        deploymentIncidentIds: removal.watches.deploymentIncidentIds.filter((id) => !this.committedPrunedHistoryKeys.has(`deployment:${id}`)),
+      },
+    }
+  }
+
+  private rememberCommittedRetention(removal: RecoveryDurableRetentionRemoval): void {
+    for (const id of removal.control.incidentIds) this.committedPrunedHistoryKeys.add(`incident:${id}`)
+    for (const id of removal.control.planIds) this.committedPrunedHistoryKeys.add(`plan:${id}`)
+    for (const id of removal.watches.nodeHealthIncidentIds) this.committedPrunedHistoryKeys.add(`node:${id}`)
+    for (const id of removal.watches.certificateIncidentIds) this.committedPrunedHistoryKeys.add(`certificate:${id}`)
+    for (const id of removal.watches.deploymentIncidentIds) this.committedPrunedHistoryKeys.add(`deployment:${id}`)
+  }
+
+  private retentionSummary(removal: RecoveryDurableRetentionRemoval): string {
+    return `Pruned terminal durable history: incidents=${removal.control.incidentIds.length}, plans=${removal.control.planIds.length}, nodeHealth=${removal.watches.nodeHealthIncidentIds.length}, certificates=${removal.watches.certificateIncidentIds.length}, deployments=${removal.watches.deploymentIncidentIds.length}; audit history retained`
   }
 
   private createAuditEntry(request: RecoveryDurableAuditRequest): RecoveryDurableAuditEntry {
     const actor = this.nonBlank(request.actor, 'Recovery durable audit actor')
     const action = this.nonBlank(request.action, 'Recovery durable audit action')
     const summary = this.nonBlank(request.summary, 'Recovery durable audit summary')
-    const nowMs = this.clock()
-    if (!Number.isFinite(nowMs)) throw new Error('Recovery durable clock must return a finite timestamp')
+    const nowMs = this.now()
     const nodeId = this.optionalText(request.nodeId); const serviceId = this.optionalText(request.serviceId)
     return { id: randomUUID(), at: new Date(nowMs).toISOString(), actor, action, summary, ...(nodeId === undefined ? {} : { nodeId }), ...(serviceId === undefined ? {} : { serviceId }) }
+  }
+
+  private now(): number {
+    const value = this.clock()
+    if (!Number.isFinite(value)) throw new Error('Recovery durable clock must return a finite timestamp')
+    return value
   }
 
   private requireHydrated(): void { if (!this.hydrated) throw new Error('Recovery durable state coordinator is not hydrated') }

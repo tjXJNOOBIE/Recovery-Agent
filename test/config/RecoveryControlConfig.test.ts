@@ -30,13 +30,18 @@ test('enablesBuiltInServiceWatchAndRollingBudgetWindowByDefault', () => {
   assert.equal(service?.watchEnabled, true)
   assert.equal(service?.watchIntervalSeconds, 30)
   assert.deepEqual(service?.dependencies, [])
+  assert.equal(config.durableRetention, undefined)
   assert.deepEqual(new RecoveryWatchDefinitionBuilder().build(config), [
     { nodeId: 'node-a', serviceId: 'worker', intervalMs: 30_000 },
   ])
 })
 
-test('allowsServiceWatchBudgetAndDependencyOverrides', () => {
+test('allowsServiceWatchBudgetDependencyAndDurableRetentionOverrides', () => {
   const path = writeConfig({
+    durableRetention: {
+      terminalHistoryDays: 90,
+      terminalHistoryPerTarget: 200,
+    },
     nodes: [{
       id: 'node-a',
       baseUrl: 'http://127.0.0.1:7281',
@@ -60,7 +65,22 @@ test('allowsServiceWatchBudgetAndDependencyOverrides', () => {
   const worker = config.nodes[0]?.services[1]
   assert.equal(worker?.restartBudgetWindowSeconds, 120)
   assert.deepEqual(worker?.dependencies, [{ nodeId: 'node-a', serviceId: 'postgres' }])
+  assert.deepEqual(config.durableRetention, { terminalHistoryDays: 90, terminalHistoryPerTarget: 200 })
   assert.deepEqual(new RecoveryWatchDefinitionBuilder().build(config).map((watch) => watch.serviceId), ['postgres'])
+})
+
+test('rejectsInvalidDurableRetentionBounds', () => {
+  const zeroDays = writeConfig({
+    durableRetention: { terminalHistoryDays: 0, terminalHistoryPerTarget: 10 },
+    nodes: [{ id: 'node-a', baseUrl: 'http://127.0.0.1:1', tokenEnvironmentVariable: 'TOKEN', services: [{ id: 'api', restartAllowed: false, maxRestartAttempts: 0 }] }],
+  })
+  assert.throws(() => new RecoveryControlConfigReader().read(zeroDays), /terminalHistoryDays must be a positive integer/)
+
+  const zeroCount = writeConfig({
+    durableRetention: { terminalHistoryDays: 30, terminalHistoryPerTarget: 0 },
+    nodes: [{ id: 'node-a', baseUrl: 'http://127.0.0.1:1', tokenEnvironmentVariable: 'TOKEN', services: [{ id: 'api', restartAllowed: false, maxRestartAttempts: 0 }] }],
+  })
+  assert.throws(() => new RecoveryControlConfigReader().read(zeroCount), /terminalHistoryPerTarget must be a positive integer/)
 })
 
 test('rejectsUnknownDependencyTargetsAndDependencyCycles', () => {
