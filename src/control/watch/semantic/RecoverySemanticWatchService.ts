@@ -38,9 +38,11 @@ export class RecoverySemanticWatchService {
   public async update(watchId: string, request: string): Promise<RecoverySemanticWatchDefinition> {
     const current = this.require(watchId)
     const proposal = await this.compiler.compile(request)
-    if (proposal.nodeId !== current.nodeId || proposal.serviceId !== current.serviceId) throw new Error('Semantic watch update cannot retarget an existing watch; remove it and create another watch')
+    const latest = this.require(watchId)
+    if (latest !== current) throw new Error(`Semantic recovery watch ${current.watchId} changed while update compilation was in flight; retry against the latest state`)
+    if (proposal.nodeId !== latest.nodeId || proposal.serviceId !== latest.serviceId) throw new Error('Semantic watch update cannot retarget an existing watch; remove it and create another watch')
     const updated: RecoverySemanticWatchDefinition = {
-      ...current,
+      ...latest,
       request: request.trim(),
       intervalMs: proposal.intervalSeconds * 1_000,
       rationale: proposal.rationale,

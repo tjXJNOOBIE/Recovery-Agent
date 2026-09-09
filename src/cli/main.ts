@@ -29,6 +29,7 @@ import { LinuxNodeResourceProbe } from '../node/health/LinuxNodeResourceProbe.js
 import { NodeAgentHttpServer } from '../node/http/NodeAgentHttpServer.js'
 import { SystemdNodeServiceRuntime } from '../node/systemd/SystemdNodeServiceRuntime.js'
 import { RecoveryAgentCliHandler } from './RecoveryAgentCliHandler.js'
+import { RecoveryMcpShutdownHandler } from './RecoveryMcpShutdownHandler.js'
 
 function resolveRequest(arguments_: string[]): string {
   const argumentRequest = arguments_.join(' ').trim()
@@ -141,11 +142,11 @@ async function main(): Promise<void> {
       const stop = (): void => {
         if (closing) return
         closing = true
-        void mcpServer.close()
-          .then(() => watches.close())
-          .then(() => approvalServer?.close())
-          .then(() => control.close())
-          .then(resolve, reject)
+        const shutdown = new RecoveryMcpShutdownHandler()
+        const targets = approvalServer === undefined
+          ? { mcpServer, watches, control }
+          : { mcpServer, watches, approvalServer, control }
+        void shutdown.close(targets).then(resolve, reject)
       }
       process.once('SIGINT', stop)
       process.once('SIGTERM', stop)

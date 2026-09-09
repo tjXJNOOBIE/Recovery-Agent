@@ -44,3 +44,29 @@ test('closesStrandsRuntimeWhenSemanticCompilationFailsValidation', async () => {
   await assert.rejects(compiler.compile('Watch a made-up node'), /target is not configured/)
   assert.equal(runtime.closeCalls, 1)
 })
+
+test('preservesCompilationFailureWhenRuntimeCleanupAlsoFails', async () => {
+  const runtime = new FakeStrandsAgentRuntime(JSON.stringify({
+    nodeId: 'invented', serviceId: 'payments', intervalSeconds: 120, rationale: 'bad target',
+  }))
+  const cleanupError = new Error('runtime close failed')
+  runtime.closeError = cleanupError
+  const compiler = new StrandsRecoverySemanticWatchCompiler(
+    new FakeStrandsAgentRuntimeBootstrap(runtime),
+    new RecoveryAgentRuntimeConfigBuilder({}),
+    targets,
+    new RecoverySemanticWatchParser(targets),
+  )
+
+  await assert.rejects(
+    compiler.compile('Watch a made-up node'),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError)
+      assert.equal(error.errors.length, 2)
+      assert.match(String(error.errors[0]), /target is not configured/)
+      assert.equal(error.errors[1], cleanupError)
+      return true
+    },
+  )
+  assert.equal(runtime.closeCalls, 1)
+})
