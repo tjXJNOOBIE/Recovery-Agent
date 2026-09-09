@@ -10,7 +10,21 @@ Supported operations:
 - `load` — returns the current durable revision and snapshot.
 - `commit` — atomically replaces the snapshot when `expectedRevision` matches the current durable revision.
 
-The snapshot envelope is schema version 1 and currently contains `incidents`, `plans`, `semanticWatches`, `restartAttempts`, and `audit` arrays. Audit history is append-only: an accepted commit cannot remove or rewrite an existing audit entry.
+The current durable snapshot envelope is schema version 2. It contains:
+
+- service recovery `incidents` and timelines;
+- typed recovery `plans`;
+- `semanticWatches`;
+- rolling `restartAttempts`;
+- append-only `audit` history;
+- node-health incident history;
+- certificate incident history;
+- deployment incident history;
+- deployment baseline, marker, and stabilization state.
+
+Legacy schema-v1 snapshots remain readable. The authority normalizes v1 to safe schema-v2 defaults and emits/commits schema v2 for new durable state. Existing audit history remains append-only: an accepted commit cannot remove or rewrite an existing audit entry.
+
+Scheduler pulse bookkeeping is intentionally not durable domain state. Routine due-run or timer timestamps are excluded so a watch firing without a causal state change does not create meaningless database writes.
 
 Configuration is environment-only:
 
