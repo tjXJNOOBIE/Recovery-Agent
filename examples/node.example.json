@@ -1,8 +1,20 @@
 {
   "nodeId": "production-east-01",
-  "listenHost": "127.0.0.1",
-  "listenPort": 7281,
-  "tokenEnvironmentVariable": "RECOVERY_NODE_TOKEN_EAST_01",
+  "transport": {
+    "mode": "outbound_tls",
+    "host": "recovery-control.internal.example",
+    "port": 7843,
+    "serverName": "recovery-control.internal.example",
+    "certificateFile": "/etc/recovery/node/node.crt",
+    "privateKeyFile": "/etc/recovery/node/node.key",
+    "controlCertificateAuthorityFile": "/etc/recovery/node/control-ca.crt",
+    "allowedControlCertificateFingerprints": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "enrollmentTimeoutMs": 5000,
+    "reconnectInitialDelayMs": 1000,
+    "reconnectMaximumDelayMs": 30000
+  },
   "services": [
     {
       "id": "payments-api",
