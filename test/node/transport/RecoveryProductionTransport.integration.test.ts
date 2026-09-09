@@ -140,7 +140,7 @@ tlsTest('retiredNodeCredentialFailsClosedUntilLifecycleReloadsAllowedRotatedFile
     allowedControlCertificateFingerprints: [fingerprint('control.crt')],
     enrollmentTimeoutMs: 1_000, reconnectInitialDelayMs: 20, reconnectMaximumDelayMs: 40,
     onFailure: () => { failures += 1 },
-  }, new DemoNodeServiceRuntime('node-a', [{ id: 'worker', lifecycleState: 'running', healthy: true }]))
+  }, new DemoNodeServiceRuntime('node-a', [{ id: 'worker', lifecycleState: 'running', healthy: true, restartRestoresHealth: true }]))
 
   try {
     lifecycle.start()
