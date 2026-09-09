@@ -18,6 +18,24 @@ class SequencedCompiler implements IRecoverySemanticWatchCompiler {
   }
 }
 
+class BlockingUpdateCompiler implements IRecoverySemanticWatchCompiler {
+  public calls = 0
+  private releaseUpdate: ((proposal: RecoverySemanticWatchProposal) => void) | undefined
+
+  public async compile(_request: string): Promise<RecoverySemanticWatchProposal> {
+    this.calls += 1
+    if (this.calls === 1) return paymentsProposal
+    return new Promise<RecoverySemanticWatchProposal>((resolve) => { this.releaseUpdate = resolve })
+  }
+
+  public release(proposal: RecoverySemanticWatchProposal): void {
+    const release = this.releaseUpdate
+    if (release === undefined) throw new Error('Update compilation is not waiting')
+    this.releaseUpdate = undefined
+    release(proposal)
+  }
+}
+
 class CountingRecoveryRuntime implements RecoveryServiceWatchRuntime {
   public calls = 0
   public async recoverService(nodeId: string, serviceId: string): Promise<RecoveryRunResult> {
@@ -82,4 +100,22 @@ test('semanticWatchUpdateCannotRetargetExistingWatch', async () => {
   await assert.rejects(semantic.update(created.watchId, 'Actually watch worker'), /cannot retarget/)
   assert.equal(semantic.list()[0]?.nodeId, 'east')
   assert.equal(serviceWatches.listStates()[0]?.serviceId, 'payments')
+})
+
+test('removeWinningRaceWithUpdateCannotReinstallOrphanedDurableWatchOverride', async () => {
+  const serviceWatches = new RecoveryWatchService(new CountingRecoveryRuntime(), [])
+  const compiler = new BlockingUpdateCompiler()
+  const semantic = new RecoverySemanticWatchService(compiler, serviceWatches)
+  const created = await semantic.create('Watch payments')
+
+  const update = semantic.update(created.watchId, 'Watch payments every minute')
+  assert.equal(compiler.calls, 2)
+  semantic.remove(created.watchId)
+  assert.equal(semantic.list().length, 0)
+  assert.equal(serviceWatches.listStates().length, 0)
+
+  compiler.release({ ...paymentsProposal, intervalSeconds: 60, rationale: 'One-minute watch.' })
+  await assert.rejects(update, /Unknown semantic recovery watch/)
+  assert.equal(semantic.list().length, 0)
+  assert.equal(serviceWatches.listStates().length, 0)
 })

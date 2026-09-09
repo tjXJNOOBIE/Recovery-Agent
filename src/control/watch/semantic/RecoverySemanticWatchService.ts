@@ -45,12 +45,8 @@ export class RecoverySemanticWatchService {
       return normalized
     })
 
-    for (const current of this.definitions) {
-      this.serviceWatches.clearOverride(current.nodeId, current.serviceId)
-    }
-    for (const definition of restored) {
-      this.serviceWatches.upsertOverride(definition)
-    }
+    for (const current of this.definitions) this.serviceWatches.clearOverride(current.nodeId, current.serviceId)
+    for (const definition of restored) this.serviceWatches.upsertOverride(definition)
     this.definitions = restored
   }
 
@@ -76,10 +72,14 @@ export class RecoverySemanticWatchService {
   public async prepareUpdate(watchId: string, request: string): Promise<RecoverySemanticWatchMutation> {
     const current = this.require(watchId)
     const proposal = await this.compiler.compile(request)
+    const latest = this.require(watchId)
+    if (latest !== current) {
+      throw new Error(`Semantic recovery watch ${current.watchId} changed while update compilation was in flight; retry against the latest state`)
+    }
     this.requireAllowedTarget(proposal.nodeId, proposal.serviceId)
-    if (proposal.nodeId !== current.nodeId || proposal.serviceId !== current.serviceId) throw new Error('Semantic watch update cannot retarget an existing watch; remove it and create another watch')
+    if (proposal.nodeId !== latest.nodeId || proposal.serviceId !== latest.serviceId) throw new Error('Semantic watch update cannot retarget an existing watch; remove it and create another watch')
     const updated: RecoverySemanticWatchDefinition = {
-      ...current,
+      ...latest,
       request: request.trim(),
       intervalMs: proposal.intervalSeconds * 1_000,
       rationale: proposal.rationale,
@@ -93,10 +93,7 @@ export class RecoverySemanticWatchService {
 
   public prepareRemove(watchId: string): RecoverySemanticWatchMutation {
     const current = this.require(watchId)
-    return {
-      result: current,
-      definitions: this.definitions.filter((definition) => definition.watchId !== current.watchId),
-    }
+    return { result: current, definitions: this.definitions.filter((definition) => definition.watchId !== current.watchId) }
   }
 
   public async create(request: string): Promise<RecoverySemanticWatchDefinition> {
@@ -132,12 +129,8 @@ export class RecoverySemanticWatchService {
     const watchId = definition.watchId.trim()
     const nodeId = definition.nodeId.trim()
     const serviceId = definition.serviceId.trim()
-    if (watchId.length === 0 || nodeId.length === 0 || serviceId.length === 0) {
-      throw new Error(`Recovery semantic watch[${index}] identity and target must be non-blank`)
-    }
-    if (!Number.isSafeInteger(definition.intervalMs) || definition.intervalMs <= 0) {
-      throw new Error(`Recovery semantic watch[${index}] intervalMs must be a positive safe integer`)
-    }
+    if (watchId.length === 0 || nodeId.length === 0 || serviceId.length === 0) throw new Error(`Recovery semantic watch[${index}] identity and target must be non-blank`)
+    if (!Number.isSafeInteger(definition.intervalMs) || definition.intervalMs <= 0) throw new Error(`Recovery semantic watch[${index}] intervalMs must be a positive safe integer`)
     this.requireAllowedTarget(nodeId, serviceId)
     return { ...definition, watchId, nodeId, serviceId }
   }

@@ -63,6 +63,26 @@ test('aggregatesInvocationAndCleanupFailuresWithoutLosingPrimaryError', async ()
   assert.equal(runtime.closeCalls, 1)
 })
 
+test('preservesUndefinedInvocationRejectionWhenCleanupAlsoFails', async () => {
+  const runtime = new FakeStrandsAgentRuntime('unused')
+  const cleanupError = new Error('runtime close failed')
+  runtime.failInvokeWith(undefined)
+  runtime.closeError = cleanupError
+  const handler = new RecoveryAgentCliHandler(
+    new FakeStrandsAgentRuntimeBootstrap(runtime),
+    new RecoveryAgentRuntimeConfigBuilder({}),
+  )
+
+  await assert.rejects(
+    handler.handle('do the work'),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError)
+      assert.deepEqual(error.errors, [undefined, cleanupError])
+      return true
+    },
+  )
+})
+
 test('surfacesCleanupFailureWhenInvocationSucceeds', async () => {
   const runtime = new FakeStrandsAgentRuntime('complete')
   const cleanupError = new Error('runtime close failed')

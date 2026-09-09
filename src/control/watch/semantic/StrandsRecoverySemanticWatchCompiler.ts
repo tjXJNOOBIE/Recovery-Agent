@@ -26,6 +26,8 @@ export class StrandsRecoverySemanticWatchCompiler implements IRecoverySemanticWa
     const normalized = request.trim()
     if (normalized.length === 0 || normalized.length > 4_000) throw new Error('Semantic recovery watch request must contain 1 through 4000 characters')
     const runtime = await this.bootstrap.createAgentRuntime(this.configBuilder.build())
+    let compilationFailed = false
+    let compilationError: unknown
     try {
       const result = await runtime.invokeAgent(
         'Compile the operator request into one deterministic service-recovery watch. Return ONLY strict JSON with exactly '
@@ -34,8 +36,23 @@ export class StrandsRecoverySemanticWatchCompiler implements IRecoverySemanticWa
         + `Configured targets: ${JSON.stringify(this.targets)} Operator request: ${JSON.stringify(normalized)}`,
       )
       return this.parser.parse(result.toString())
+    } catch (error: unknown) {
+      compilationFailed = true
+      compilationError = error
+      throw error
     } finally {
-      await runtime.close()
+      try {
+        await runtime.close()
+      } catch (cleanupError: unknown) {
+        if (compilationFailed) {
+          throw new AggregateError(
+            [compilationError, cleanupError],
+            'Semantic watch compilation failed and Strands runtime cleanup also failed',
+            { cause: compilationError },
+          )
+        }
+        throw cleanupError
+      }
     }
   }
 }

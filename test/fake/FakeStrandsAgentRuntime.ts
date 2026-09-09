@@ -12,6 +12,7 @@ export class FakeStrandsAgentRuntime implements IStrandsAgentRuntime {
   public readonly invokeHistory: InvokeArguments[0][] = []
   public invokeError: unknown | undefined
   public closeError: unknown | undefined
+  private invokeShouldFail = false
   private closed = false
   private readonly results: InvokeResult[]
 
@@ -20,10 +21,15 @@ export class FakeStrandsAgentRuntime implements IStrandsAgentRuntime {
     this.results = values.map((value) => ({ toString: () => value } as InvokeResult))
   }
 
+  public failInvokeWith(error: unknown): void {
+    this.invokeShouldFail = true
+    this.invokeError = error
+  }
+
   public async invokeAgent(invokeArgs: InvokeArguments[0], invokeOptions?: InvokeArguments[1]): Promise<InvokeResult> {
     void invokeOptions
     this.invokeCalls += 1; this.lastInvokeArgs = invokeArgs; this.invokeHistory.push(invokeArgs)
-    if (this.invokeError !== undefined) throw this.invokeError
+    if (this.invokeShouldFail || this.invokeError !== undefined) throw this.invokeError
     const result = this.results[Math.min(this.invokeCalls - 1, this.results.length - 1)]
     if (result === undefined) throw new Error('Fake invoke result is not configured')
     return result
