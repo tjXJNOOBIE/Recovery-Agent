@@ -26,19 +26,20 @@ export class RecoveryAgentCliHandler {
       this.runtimeConfigBuilder.build(),
     )
 
-    let invocationError: unknown | undefined
+    let invocationFailed = false
+    let invocationError: unknown
     try {
       const result = await agentRuntime.invokeAgent(normalizedRequest)
-
       return result.toString()
     } catch (error: unknown) {
+      invocationFailed = true
       invocationError = error
       throw error
     } finally {
       try {
         await agentRuntime.close()
       } catch (cleanupError: unknown) {
-        if (invocationError !== undefined) {
+        if (invocationFailed) {
           throw new AggregateError(
             [invocationError, cleanupError],
             'Recovery Agent invocation failed and runtime cleanup also failed',
