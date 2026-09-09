@@ -29,12 +29,8 @@ export class RecoveryNodeRequestDispatcher {
           ...(resources === undefined ? {} : { resources }),
         })
       }
-      if (request.operation === 'inspect_service') {
-        return this.success(request.id, await this.runtime.inspectService(request.serviceId))
-      }
-      if (request.operation === 'inspect_certificates') {
-        return this.success(request.id, await this.certificateProbe?.listCertificates() ?? [])
-      }
+      if (request.operation === 'inspect_service') return this.success(request.id, await this.runtime.inspectService(request.serviceId))
+      if (request.operation === 'inspect_certificates') return this.success(request.id, await this.certificateProbe?.listCertificates() ?? [])
       return this.success(request.id, await this.runtime.restartService(request.serviceId))
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
@@ -44,7 +40,7 @@ export class RecoveryNodeRequestDispatcher {
         id: request.id,
         ok: false,
         error: {
-          code: /unknown service/iu.test(message) ? 'not_found' : 'operation_failed',
+          code: 'operation_failed',
           message: this.boundMessage(message),
         },
       }

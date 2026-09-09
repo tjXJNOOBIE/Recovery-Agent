@@ -59,5 +59,5 @@ test('dispatchesOnlyTypedProtocolOperationsToTheNodeRuntime', async () => {
 
   const missing = await dispatcher.dispatch({ version: 1, type: 'request', id: 'missing-1', operation: 'inspect_service', serviceId: 'does-not-exist' })
   assert.equal(missing.ok, false)
-  if (!missing.ok) assert.equal(missing.error.code, 'not_found')
+  if (!missing.ok) assert.equal(missing.error.code, 'operation_failed')
 })
