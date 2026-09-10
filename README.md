@@ -306,16 +306,20 @@ GitHub fallback workflow run `34392908758` (#20) passed all three jobs on that h
 
 The 129-test suite includes regression evidence for v1→v2 normalization, deployment baseline continuity through outage, causal watch-state checkpointing before recovery mutation, semantic-watch transaction ordering, crash/concurrency reconciliation, duplicate active approval secrets, principal-prefix impersonation prevention, expiry/revocation, named-mode legacy bypass prevention, verified approval/rejection audit identity, zero approved node mutation when durability intent persistence fails, opt-in/default-off retention configuration, terminal-only retention, plan/incident referential retention, latest terminal timestamp selection, immutable audit preservation, no cleanup bookkeeping on failed commits, and prevention of durable history resurrection from still-live process memory.
 
-This evidence was produced by GitHub fallback because the current Tavall Cloud environment resolved the exact Recovery source but its physical repository executor failed before process launch with `STALE_VERSION`, and restored service-console sockets were unavailable. No Tavall-local test execution is claimed for this head.
+The exact PR #9 source was also resolved and refreshed in Tavall Cloud. The
+physical packaged-systemd evidence was completed by GitHub fallback because
+the earlier Tavall repository executor returned `STALE_VERSION` before process
+launch; no unsupported Tavall-local result is inferred from that failure.
 
 ## Remaining promotion gates
 
-Recovery Agent remains Draft. Major remaining gates are:
+Main now includes the secure/durable Recovery architecture and the physical
+packaged-systemd acceptance harness. Remaining product gates are:
 
-- physical MCP Inspector/current supported host acceptance;
 - authorized real-model Recovery invocation through `@tjxjnoobie/strands-bridge`;
 - broader production adapters/actions where product scope requires them;
-- physical authorized production action -> execution -> resulting-state evidence.
+- a supported host/Inspector session using the hosted control-plane deployment;
+- a controlled hosted demo endpoint with authenticated access.
 
 ## Development
 
