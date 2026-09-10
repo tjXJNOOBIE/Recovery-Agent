@@ -1,0 +1,13 @@
+flowchart LR
+  Host[MCP host / Inspector] --> Control[Recovery control host]
+  Control --> Strands[Bounded Strands triage and critique]
+  Strands --> Typed[Deterministic typed recovery control]
+  Typed --> State[Java/Tavall Database authority]
+  State --> PG[(PostgreSQL)]
+  Typed --> TLS[Outbound TLS 1.3 mTLS session]
+  TLS --> Node[Restricted Recovery node]
+  Node --> Systemd[Fixed systemd service mapping]
+  Systemd --> Verify[Fresh health and audit evidence]
+  Approval[Named human approval] -. outside model MCP .-> Typed
+  classDef boundary fill:#172554,stroke:#93c5fd,color:#fff;
+  class Control,Typed,TLS,Approval boundary;

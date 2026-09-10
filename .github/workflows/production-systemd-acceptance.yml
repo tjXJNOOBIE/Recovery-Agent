@@ -1,0 +1,386 @@
+name: Production systemd acceptance
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/production-systemd-acceptance.yml'
+      - 'src/**'
+      - 'state-authority/**'
+      - 'package.json'
+      - 'examples/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  packaged-systemd-recovery:
+    name: Packaged outbound-mTLS systemd recovery
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: recovery
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: recovery-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d recovery"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.7.1'
+
+      - name: Build distributable package
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm pack --silent > /tmp/recovery-package-name
+          tail -n 1 /tmp/recovery-package-name > /tmp/recovery-tarball
+
+      - name: Install clean node and control consumers
+        run: |
+          set -euo pipefail
+          for consumer in /tmp/recovery-node-consumer /tmp/recovery-control-consumer; do
+            mkdir -p "$consumer"
+            cd "$consumer"
+            npm init -y >/dev/null
+            npm install "$GITHUB_WORKSPACE/$(cat /tmp/recovery-tarball)" --no-audit --no-fund
+          done
+          cd /tmp/recovery-control-consumer
+          npm install --no-save @modelcontextprotocol/inspector@2.5.0 --no-audit --no-fund
+
+      - name: Generate physical mTLS identity and production configs
+        run: |
+          set -euo pipefail
+          root=/tmp/recovery-acceptance
+          mkdir -p "$root/control" "$root/node" "$root/target" "$root/logs"
+
+          openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+            -subj '/CN=Recovery Physical Acceptance CA' \
+            -keyout "$root/ca.key" -out "$root/ca.crt"
+
+          openssl req -newkey rsa:2048 -nodes -sha256 \
+            -subj '/CN=recovery-control.test' \
+            -keyout "$root/control/control.key" -out "$root/control/control.csr"
+          cat > "$root/control/control.ext" <<'EOF'
+          subjectAltName=DNS:recovery-control.test,IP:127.0.0.1
+          extendedKeyUsage=serverAuth
+          EOF
+          openssl x509 -req -sha256 -days 1 \
+            -in "$root/control/control.csr" -CA "$root/ca.crt" -CAkey "$root/ca.key" -CAcreateserial \
+            -extfile "$root/control/control.ext" -out "$root/control/control.crt"
+
+          openssl req -newkey rsa:2048 -nodes -sha256 \
+            -subj '/CN=physical-node' \
+            -keyout "$root/node/node.key" -out "$root/node/node.csr"
+          printf 'extendedKeyUsage=clientAuth\n' > "$root/node/node.ext"
+          openssl x509 -req -sha256 -days 1 \
+            -in "$root/node/node.csr" -CA "$root/ca.crt" -CAkey "$root/ca.key" -CAserial "$root/ca.srl" \
+            -extfile "$root/node/node.ext" -out "$root/node/node.crt"
+
+          chmod 600 "$root/ca.key" "$root/control/control.key" "$root/node/node.key"
+          cp "$root/ca.crt" "$root/control/node-ca.crt"
+          cp "$root/ca.crt" "$root/node/control-ca.crt"
+
+          node_fp="$(openssl x509 -in "$root/node/node.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+          control_fp="$(openssl x509 -in "$root/control/control.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+
+          cat > /tmp/recovery-control-consumer/control.json <<JSON
+          {
+            "transport": {
+              "mode": "outbound_tls",
+              "listenHost": "127.0.0.1",
+              "listenPort": 47843,
+              "certificateFile": "$root/control/control.crt",
+              "privateKeyFile": "$root/control/control.key",
+              "clientCertificateAuthorityFile": "$root/control/node-ca.crt",
+              "requestTimeoutMs": 10000,
+              "enrollmentTimeoutMs": 5000
+            },
+            "nodes": [
+              {
+                "id": "physical-node",
+                "allowedCertificateFingerprints": ["$node_fp"],
+                "services": [
+                  {
+                    "id": "acceptance-service",
+                    "restartAllowed": true,
+                    "maxRestartAttempts": 1,
+                    "restartBudgetWindowSeconds": 600,
+                    "watchEnabled": false
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+
+          cat > "$root/node/node.json" <<JSON
+          {
+            "nodeId": "physical-node",
+            "transport": {
+              "mode": "outbound_tls",
+              "host": "127.0.0.1",
+              "port": 47843,
+              "serverName": "recovery-control.test",
+              "certificateFile": "$root/node/node.crt",
+              "privateKeyFile": "$root/node/node.key",
+              "controlCertificateAuthorityFile": "$root/node/control-ca.crt",
+              "allowedControlCertificateFingerprints": ["$control_fp"],
+              "enrollmentTimeoutMs": 5000,
+              "reconnectInitialDelayMs": 100,
+              "reconnectMaximumDelayMs": 1000
+            },
+            "services": [
+              {
+                "id": "acceptance-service",
+                "unit": "recovery-acceptance.service"
+              }
+            ]
+          }
+          JSON
+
+      - name: Install real systemd target and narrow non-root node authority
+        run: |
+          set -euo pipefail
+          root=/tmp/recovery-acceptance
+
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin recovery-node-test
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin recovery-target-test
+          sudo chown -R recovery-node-test:recovery-node-test "$root/node"
+          sudo chown -R recovery-target-test:recovery-target-test "$root/target"
+
+          sudo tee /etc/systemd/system/recovery-acceptance.service >/dev/null <<'UNIT'
+          [Unit]
+          Description=Recovery Agent physical acceptance target
+
+          [Service]
+          Type=simple
+          User=recovery-target-test
+          ExecStart=/bin/sh -c 'printf "%s\n" "$$" >> /tmp/recovery-acceptance/target/starts; exec /usr/bin/sleep infinity'
+          Restart=no
+          UNIT
+
+          sudo install -d -o root -g root -m 0755 /opt/recovery-acceptance/bin
+          sudo tee /opt/recovery-acceptance/bin/systemctl >/dev/null <<'WRAPPER'
+          #!/bin/sh
+          set -eu
+          unit='recovery-acceptance.service'
+          if [ "$#" -ge 2 ] && [ "$1" = 'show' ] && [ "$2" = "$unit" ]; then
+            exec /bin/systemctl "$@"
+          fi
+          if [ "$#" -eq 2 ] && [ "$1" = 'restart' ] && [ "$2" = "$unit" ]; then
+            exec /usr/bin/sudo -n /bin/systemctl restart "$unit"
+          fi
+          echo "Recovery acceptance systemctl wrapper rejected unsupported operation/target" >&2
+          exit 77
+          WRAPPER
+          sudo chmod 0755 /opt/recovery-acceptance/bin/systemctl
+
+          echo 'recovery-node-test ALL=(root) NOPASSWD: /bin/systemctl restart recovery-acceptance.service' \
+            | sudo tee /etc/sudoers.d/recovery-agent-acceptance >/dev/null
+          sudo chmod 0440 /etc/sudoers.d/recovery-agent-acceptance
+          sudo visudo -cf /etc/sudoers.d/recovery-agent-acceptance
+
+          sudo systemctl daemon-reload
+          sudo systemctl start recovery-acceptance.service
+          sudo systemctl is-active --quiet recovery-acceptance.service
+          test "$(wc -l < "$root/target/starts")" -eq 1
+
+          set +e
+          sudo -u recovery-node-test env PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \
+            systemctl restart cron.service >/tmp/recovery-unauthorized-out 2>/tmp/recovery-unauthorized-err
+          unauthorized_status=$?
+          set -e
+          test "$unauthorized_status" -ne 0
+          grep -q 'rejected unsupported operation/target' /tmp/recovery-unauthorized-err
+
+      - name: Start packaged production node as restricted user
+        run: |
+          set -euo pipefail
+          root=/tmp/recovery-acceptance
+          package_root=/tmp/recovery-node-consumer/node_modules/@tjxjnoobie/recovery-agent
+          node_bin="$(command -v node)"
+          sudo -u recovery-node-test env \
+            HOME="$root/node" \
+            PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \
+            "$node_bin" "$package_root/dist/cli/main.js" node "$root/node/node.json" \
+            >"$root/logs/node.out" 2>"$root/logs/node.err" &
+          echo $! > "$root/node-agent.pid"
+          sleep 1
+          if ! kill -0 "$(cat "$root/node-agent.pid")"; then
+            echo 'Packaged restricted node exited before the startup liveness check.' >&2
+            echo '--- node stdout ---' >&2
+            sed -n '1,200p' "$root/logs/node.out" >&2 || true
+            echo '--- node stderr ---' >&2
+            sed -n '1,240p' "$root/logs/node.err" >&2 || true
+            exit 1
+          fi
+
+      - name: Accept current MCP Inspector against packaged control host
+        working-directory: /tmp/recovery-control-consumer
+        env:
+          RECOVERY_STATE_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/recovery
+          RECOVERY_STATE_DB_USERNAME: postgres
+          RECOVERY_STATE_DB_PASSWORD: recovery-test-password
+          RECOVERY_STATE_GENERATE_SCHEMA: 'true'
+        run: |
+          set -euo pipefail
+          package_root=/tmp/recovery-control-consumer/node_modules/@tjxjnoobie/recovery-agent
+          ./node_modules/.bin/mcp-inspector --cli \
+            node "$package_root/dist/cli/main.js" mcp ./control.json \
+            --method tools/list --format json > /tmp/recovery-tools.json
+
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const outer = JSON.parse(readFileSync('/tmp/recovery-tools.json', 'utf8'))
+          const result = outer.result ?? outer
+          const names = new Set((result.tools ?? []).map((tool) => tool.name))
+          for (const required of ['service_inspect', 'service_recover', 'recovery_readiness']) {
+            if (!names.has(required)) throw new Error(`MCP Inspector did not observe required tool ${required}`)
+          }
+          for (const forbidden of ['approve', 'reject', 'shell', 'systemctl']) {
+            if (names.has(forbidden)) throw new Error(`Unexpected privileged model-facing tool ${forbidden}`)
+          }
+          NODE
+
+      - name: Recover stopped real systemd service through persistent MCP client
+        working-directory: /tmp/recovery-control-consumer
+        env:
+          RECOVERY_STATE_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/recovery
+          RECOVERY_STATE_DB_USERNAME: postgres
+          RECOVERY_STATE_DB_PASSWORD: recovery-test-password
+          RECOVERY_STATE_GENERATE_SCHEMA: 'true'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { spawn } from 'node:child_process'
+          import { createInterface } from 'node:readline'
+          import { execFileSync } from 'node:child_process'
+          import { readFileSync } from 'node:fs'
+
+          const root = '/tmp/recovery-acceptance'
+          const packageRoot = '/tmp/recovery-control-consumer/node_modules/@tjxjnoobie/recovery-agent'
+          const child = spawn(process.execPath, [`${packageRoot}/dist/cli/main.js`, 'mcp', './control.json'], {
+            cwd: process.cwd(),
+            env: process.env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
+          const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
+          const pending = new Map()
+          let nextId = 1
+          let stderr = ''
+          child.stderr.on('data', chunk => { stderr += String(chunk) })
+          lines.on('line', line => {
+            try {
+              const message = JSON.parse(line)
+              const waiter = pending.get(message.id)
+              if (waiter) { pending.delete(message.id); waiter(message) }
+            } catch {}
+          })
+
+          function request(method, params = {}) {
+            const id = nextId++
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(() => { pending.delete(id); reject(new Error(`MCP request timed out: ${method}`)) }, 20_000)
+              pending.set(id, message => { clearTimeout(timer); resolve(message) })
+              child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+            })
+          }
+
+          async function callTool(name, args) {
+            const outer = await request('tools/call', { name, arguments: args })
+            if (outer.error) throw new Error(JSON.stringify(outer.error))
+            if (outer.result?.isError) throw new Error(`MCP tool ${name} returned isError`)
+            const text = outer.result?.content?.find(entry => entry.type === 'text')?.text
+            if (typeof text !== 'string') throw new Error(`MCP tool ${name} returned no text payload`)
+            return JSON.parse(text)
+          }
+
+          try {
+            const init = await request('initialize', {
+              protocolVersion: '2025-11-25',
+              capabilities: {},
+              clientInfo: { name: 'physical-systemd-acceptance', version: '1' },
+            })
+            if (init.error) throw new Error(JSON.stringify(init.error))
+            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`)
+            const listed = await request('tools/list')
+            const names = new Set((listed.result?.tools || []).map(tool => tool.name))
+            for (const required of ['service_inspect', 'service_recover', 'recovery_readiness']) if (!names.has(required)) throw new Error(`MCP client did not observe ${required}`)
+            for (const forbidden of ['approve', 'reject', 'shell', 'systemctl']) if (names.has(forbidden)) throw new Error(`Unexpected privileged tool ${forbidden}`)
+
+            let inspect
+            for (let attempt = 0; attempt < 12; attempt++) {
+              try { inspect = await callTool('service_inspect', { nodeId: 'physical-node', serviceId: 'acceptance-service' }); if (inspect.healthy === true && inspect.lifecycleState === 'running') break } catch {}
+              await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+            if (inspect?.healthy !== true || inspect.lifecycleState !== 'running') throw new Error(`Initial inspection did not observe a healthy service. Node stderr: ${stderr}`)
+
+            execFileSync('sudo', ['systemctl', 'stop', 'recovery-acceptance.service'], { stdio: 'inherit' })
+            try {
+              execFileSync('sudo', ['systemctl', 'is-active', '--quiet', 'recovery-acceptance.service'], { stdio: 'ignore' })
+              throw new Error('Acceptance service remained active after the deliberate stop')
+            } catch (error) {
+              if (error?.message === 'Acceptance service remained active after the deliberate stop') throw error
+            }
+            const startsBefore = readFileSync(`${root}/target/starts`, 'utf8').trim().split(/\r?\n/).length
+            if (startsBefore !== 1) throw new Error(`Expected one initial service start, got ${startsBefore}`)
+
+            let recovered
+            for (let attempt = 0; attempt < 12; attempt++) {
+              try { recovered = await callTool('service_recover', { nodeId: 'physical-node', serviceId: 'acceptance-service' }); if (recovered.status === 'recovered' && recovered.snapshot?.healthy === true && recovered.snapshot?.lifecycleState === 'running' && recovered.restartAttempts === 1) break } catch {}
+              await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+            if (!recovered || recovered.status !== 'recovered' || recovered.snapshot?.healthy !== true || recovered.snapshot?.lifecycleState !== 'running' || recovered.restartAttempts !== 1) throw new Error(`Recovery did not produce the expected verified result: ${JSON.stringify(recovered)}`)
+
+            execFileSync('sudo', ['systemctl', 'is-active', '--quiet', 'recovery-acceptance.service'], { stdio: 'inherit' })
+            const startsAfter = readFileSync(`${root}/target/starts`, 'utf8').trim().split(/\r?\n/).length
+            if (startsAfter !== 2) throw new Error(`Expected exactly one restart, got ${startsAfter} total starts`)
+            const verify = await callTool('service_inspect', { nodeId: 'physical-node', serviceId: 'acceptance-service' })
+            if (verify.healthy !== true || verify.lifecycleState !== 'running') throw new Error(`Fresh verification was not healthy: ${JSON.stringify(verify)}`)
+
+            const injection = await request('tools/call', { name: 'service_recover', arguments: { nodeId: 'physical-node', serviceId: 'acceptance-service', unit: 'cron.service' } })
+            if (injection.result?.isError !== true && injection.error === undefined) throw new Error('Strict MCP schema accepted caller-supplied unit field')
+            console.log(JSON.stringify({ evidence: 'PHYSICAL PRODUCTION SYSTEMD ACCEPTANCE', recoveryStatus: recovered.status, restartAttempts: recovered.restartAttempts, resultingLifecycleState: verify.lifecycleState, resultingHealthy: verify.healthy, targetStartCount: startsAfter, callerSuppliedUnitRejected: true }, null, 2))
+          } finally {
+            lines.close()
+            child.kill('SIGTERM')
+          }
+          NODE
+
+      - name: Cleanup physical acceptance runtime
+        if: always()
+        run: |
+          set +e
+          if [ -f /tmp/recovery-acceptance/node-agent.pid ]; then
+            sudo kill "$(cat /tmp/recovery-acceptance/node-agent.pid)" 2>/dev/null
+          fi
+          sudo systemctl stop recovery-acceptance.service 2>/dev/null
+          sudo rm -f /etc/systemd/system/recovery-acceptance.service
+          sudo rm -f /etc/sudoers.d/recovery-agent-acceptance
+          sudo rm -rf /opt/recovery-acceptance
+          sudo systemctl daemon-reload 2>/dev/null
+          sudo userdel recovery-node-test 2>/dev/null
+          sudo userdel recovery-target-test 2>/dev/null

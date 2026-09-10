@@ -1,0 +1,74 @@
+name: One-shot acceptance harness liveness correction
+
+on:
+  push:
+    branches:
+      - working/physical-systemd-recovery-acceptance
+    paths:
+      - .github/workflows/patch-systemd-acceptance-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: working/physical-systemd-recovery-acceptance
+
+      - name: Patch restricted node liveness check
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('.github/workflows/production-systemd-acceptance.yml')
+          text = path.read_text()
+          start_marker = '      - name: Start packaged production node as restricted user\n'
+          end_marker = '      - name: Accept current MCP Inspector against packaged control host\n'
+          start = text.find(start_marker)
+          end = text.find(end_marker, start + len(start_marker))
+          if start < 0 or end < 0:
+              raise SystemExit('acceptance startup step markers not found')
+          lines = [
+              '      - name: Start packaged production node as restricted user',
+              '        run: |',
+              '          set -euo pipefail',
+              '          root=/tmp/recovery-acceptance',
+              '          package_root=/tmp/recovery-node-consumer/node_modules/@tjxjnoobie/recovery-agent',
+              '          sudo -u recovery-node-test env \\',
+              '            HOME="$root/node" \\',
+              '            PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \\',
+              '            /usr/bin/node "$package_root/dist/cli/main.js" node "$root/node/node.json" \\',
+              '            >"$root/logs/node.out" 2>"$root/logs/node.err" &',
+              '          echo $! > "$root/node-launcher.pid"',
+              '          sleep 1',
+              '',
+              "          node_pid=\"$(pgrep -u recovery-node-test -f 'dist/cli/main.js node /tmp/recovery-acceptance/node/node.json' | head -n 1 || true)\"",
+              '          if [ -z "$node_pid" ]; then',
+              "            echo 'Packaged restricted node exited unexpectedly.' >&2",
+              "            echo '--- node stderr ---' >&2",
+              '            cat "$root/logs/node.err" >&2 || true',
+              "            echo '--- node stdout ---' >&2",
+              '            cat "$root/logs/node.out" >&2 || true',
+              "            echo '--- recovery-node-test process table ---' >&2",
+              '            ps -fu recovery-node-test >&2 || true',
+              '            exit 1',
+              '          fi',
+              '          echo "$node_pid" > "$root/node-agent.pid"',
+              '',
+          ]
+          replacement = '\n'.join(lines) + '\n'
+          path.write_text(text[:start] + replacement + text[end:])
+
+      - name: Commit correction and remove helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Recovery Agent Acceptance Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/patch-systemd-acceptance-once.yml
+          git add .github/workflows/production-systemd-acceptance.yml
+          git diff --cached --check
+          git commit -m 'Test: track actual restricted node process in acceptance'
+          git push origin HEAD:working/physical-systemd-recovery-acceptance
