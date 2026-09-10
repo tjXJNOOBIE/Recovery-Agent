@@ -228,7 +228,14 @@ jobs:
             >"$root/logs/node.out" 2>"$root/logs/node.err" &
           echo $! > "$root/node-agent.pid"
           sleep 1
-          kill -0 "$(cat "$root/node-agent.pid")"
+          if ! kill -0 "$(cat "$root/node-agent.pid")"; then
+            echo 'Packaged restricted node exited before the startup liveness check.' >&2
+            echo '--- node stdout ---' >&2
+            sed -n '1,200p' "$root/logs/node.out" >&2 || true
+            echo '--- node stderr ---' >&2
+            sed -n '1,240p' "$root/logs/node.err" >&2 || true
+            exit 1
+          fi
 
       - name: Accept current MCP Inspector against packaged control host
         working-directory: /tmp/recovery-control-consumer
