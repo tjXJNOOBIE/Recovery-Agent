@@ -30,3 +30,13 @@ the physical systemd gate passed on merged main. Run 34466113051 recorded
 `resultingHealthy: true`, `targetStartCount: 2`, and rejection of a
 caller-supplied unit. Do not present the local simulated demo as physical
 recovery evidence.
+
+## Hosted control-host smoke
+
+The HTTP adapter wraps the same stdio MCP control host and is suitable for a
+Tavall `EXTERNAL_SYSTEMD` service. A physical local smoke used a real loopback
+node configuration and the running `e2e-life-agent-hosted-demo.service` as a
+read-only inspected target. It passed HTTP health, MCP initialize, 16-tool
+discovery, `fleet_status`, and `service_inspect`, then terminated both child
+processes cleanly. This smoke does not claim an external public endpoint or an
+authorized model invocation.
