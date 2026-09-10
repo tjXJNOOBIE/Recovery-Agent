@@ -117,6 +117,15 @@ shell, unit selection, or node mutation authority. The current controlled
 adapter smoke used a real loopback Recovery node and verified MCP initialize,
 16-tool discovery, `fleet_status`, and `service_inspect`.
 
+### Current Tavall acceptance deployment
+
+The merged application commit `e927658826b6640c51e1b78c9022d86854833220` is
+registered as Tavall service `recovery-agent-hosted-demo`, owned by
+`dev-storage`, using `EXTERNAL_SYSTEMD` unit
+`e2e-recovery-hosted-control.service`. Tavall reports the service `RUNNING`
+after start and restart. Its controlled loopback MCP is
+`http://127.0.0.1:7844/mcp`; public HTTPS exposure is not claimed.
+
 Current model-facing tools:
 
 - `fleet_status`

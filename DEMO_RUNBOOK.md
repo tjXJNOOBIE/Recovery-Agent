@@ -40,3 +40,8 @@ read-only inspected target. It passed HTTP health, MCP initialize, 16-tool
 discovery, `fleet_status`, and `service_inspect`, then terminated both child
 processes cleanly. This smoke does not claim an external public endpoint or an
 authorized model invocation.
+
+The current Tavall service is `recovery-agent-hosted-demo`, running merged
+commit `e927658826b6640c51e1b78c9022d86854833220`. Tavall start/restart,
+health, MCP initialize, 16-tool discovery, `fleet_status`, and
+`service_inspect` were physically verified against the real loopback node.
