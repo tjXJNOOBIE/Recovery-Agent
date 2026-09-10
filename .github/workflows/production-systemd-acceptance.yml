@@ -221,10 +221,11 @@ jobs:
           set -euo pipefail
           root=/tmp/recovery-acceptance
           package_root=/tmp/recovery-node-consumer/node_modules/@tjxjnoobie/recovery-agent
+          node_bin="$(command -v node)"
           sudo -u recovery-node-test env \
             HOME="$root/node" \
             PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \
-            /usr/bin/node "$package_root/dist/cli/main.js" node "$root/node/node.json" \
+            "$node_bin" "$package_root/dist/cli/main.js" node "$root/node/node.json" \
             >"$root/logs/node.out" 2>"$root/logs/node.err" &
           echo $! > "$root/node-agent.pid"
           sleep 1
