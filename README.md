@@ -238,7 +238,7 @@ Linux node evidence covers memory, swap, filesystem bytes/inodes, root read-only
 
 ## Strands boundary
 
-Recovery Agent depends on `@tjxjnoobie/strands-bridge`, pinned to the reviewed commit `a00b123e6328df95b0dab7f2f79b251277c67796`, rather than directly on `@strands-agents/sdk`.
+Recovery Agent depends on `@tjxjnoobie/strands-bridge`, pinned to merged `main` commit `590a6a33ec3d39c03d4c59e560caf1c4e37c6976`, rather than directly on `@strands-agents/sdk`.
 
 For local development without a model API key, a user with a ChatGPT subscription can set `RECOVERY_AGENT_MODEL_ID=codex-cli`. The shared bridge invokes the locally authenticated `codex` CLI as a bounded model subprocess while native Strands retains the tool loop and deterministic recovery authority. Run `codex login` once first. This is a local/user-owned mode and is not a hosted-service credential.
 
