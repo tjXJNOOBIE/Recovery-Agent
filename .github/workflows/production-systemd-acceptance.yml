@@ -265,7 +265,7 @@ jobs:
           }
           NODE
 
-      - name: Recover stopped real systemd service through MCP Inspector
+      - name: Recover stopped real systemd service through persistent MCP client
         working-directory: /tmp/recovery-control-consumer
         env:
           RECOVERY_STATE_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/recovery
@@ -274,122 +274,100 @@ jobs:
           RECOVERY_STATE_GENERATE_SCHEMA: 'true'
         run: |
           set -euo pipefail
-          root=/tmp/recovery-acceptance
-          package_root=/tmp/recovery-control-consumer/node_modules/@tjxjnoobie/recovery-agent
-          inspector=./node_modules/.bin/mcp-inspector
-
-          call_tool() {
-            tool="$1"
-            args="$2"
-            output="$3"
-            "$inspector" --cli \
-              node "$package_root/dist/cli/main.js" mcp ./control.json \
-              --method tools/call --tool-name "$tool" --tool-args-json "$args" --format json > "$output"
-          }
-
-          extract_text_payload() {
-            input="$1"
-            output="$2"
-            node --input-type=module "$input" "$output" <<'NODE'
-          import { readFileSync, writeFileSync } from 'node:fs'
-          const [, , input, output] = process.argv
-          const outer = JSON.parse(readFileSync(input, 'utf8'))
-          const result = outer.result ?? outer
-          if (result.isError === true) throw new Error(`Inspector tool result isError: ${JSON.stringify(result)}`)
-          const text = result.content?.find((entry) => entry.type === 'text')?.text
-          if (typeof text !== 'string') throw new Error(`Inspector result has no text content: ${JSON.stringify(result)}`)
-          writeFileSync(output, JSON.stringify(JSON.parse(text)))
-          NODE
-          }
-
-          # Healthy inspection through the real outbound session. Retry only the read while the node
-          # reconnects across Inspector-owned control-host process lifetimes.
-          healthy=0
-          for attempt in $(seq 1 12); do
-            if call_tool service_inspect '{"nodeId":"physical-node","serviceId":"acceptance-service"}' /tmp/recovery-inspect-outer.json 2>/tmp/recovery-inspector.err \
-              && extract_text_payload /tmp/recovery-inspect-outer.json /tmp/recovery-inspect.json; then
-              if node -e "const s=require('/tmp/recovery-inspect.json'); process.exit(s.healthy===true && s.lifecycleState==='running' ? 0 : 1)"; then
-                healthy=1
-                break
-              fi
-            fi
-            sleep 1
-          done
-          if [ "$healthy" -ne 1 ]; then
-            echo 'Initial physical service inspection never observed a healthy connected node.' >&2
-            echo '--- inspector stderr ---' >&2
-            sed -n '1,240p' /tmp/recovery-inspector.err >&2 || true
-            echo '--- node stdout ---' >&2
-            sed -n '1,200p' "$root/logs/node.out" >&2 || true
-            echo '--- node stderr ---' >&2
-            sed -n '1,300p' "$root/logs/node.err" >&2 || true
-            echo '--- node process ---' >&2
-            ps -fu recovery-node-test >&2 || true
-            exit 1
-          fi
-
-          sudo systemctl stop recovery-acceptance.service
-          ! sudo systemctl is-active --quiet recovery-acceptance.service
-          test "$(wc -l < "$root/target/starts")" -eq 1
-
-          recovered=0
-          for attempt in $(seq 1 12); do
-            if call_tool service_recover '{"nodeId":"physical-node","serviceId":"acceptance-service"}' /tmp/recovery-recover-outer.json 2>/tmp/recovery-inspector.err \
-              && extract_text_payload /tmp/recovery-recover-outer.json /tmp/recovery-recover.json; then
-              if node -e "const r=require('/tmp/recovery-recover.json'); process.exit(r.status==='recovered' && r.snapshot?.healthy===true && r.snapshot?.lifecycleState==='running' && r.restartAttempts===1 ? 0 : 1)"; then
-                recovered=1
-                break
-              fi
-            fi
-            sleep 1
-          done
-          test "$recovered" -eq 1
-
-          sudo systemctl is-active --quiet recovery-acceptance.service
-          test "$(wc -l < "$root/target/starts")" -eq 2
-
-          verified=0
-          for attempt in $(seq 1 12); do
-            if call_tool service_inspect '{"nodeId":"physical-node","serviceId":"acceptance-service"}' /tmp/recovery-verify-outer.json 2>/tmp/recovery-inspector.err \
-              && extract_text_payload /tmp/recovery-verify-outer.json /tmp/recovery-verify.json; then
-              if node -e "const s=require('/tmp/recovery-verify.json'); process.exit(s.healthy===true && s.lifecycleState==='running' ? 0 : 1)"; then
-                verified=1
-                break
-              fi
-            fi
-            sleep 1
-          done
-          test "$verified" -eq 1
-
-          # Strict MCP input schema prevents a caller from supplying a systemd unit at all.
-          set +e
-          call_tool service_recover '{"nodeId":"physical-node","serviceId":"acceptance-service","unit":"cron.service"}' /tmp/recovery-unit-injection.json 2>/tmp/recovery-unit-injection.err
-          injection_status=$?
-          set -e
-          if [ "$injection_status" -eq 0 ]; then
-            node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs'
-          const outer = JSON.parse(readFileSync('/tmp/recovery-unit-injection.json', 'utf8'))
-          const result = outer.result ?? outer
-          if (result.isError !== true) throw new Error('Strict MCP schema accepted caller-supplied unit field')
-          NODE
-          fi
-          sudo systemctl is-active --quiet recovery-acceptance.service
-          test "$(wc -l < "$root/target/starts")" -eq 2
-
           node --input-type=module <<'NODE'
+          import { spawn } from 'node:child_process'
+          import { createInterface } from 'node:readline'
+          import { execFileSync } from 'node:child_process'
           import { readFileSync } from 'node:fs'
-          const result = JSON.parse(readFileSync('/tmp/recovery-recover.json', 'utf8'))
-          const verify = JSON.parse(readFileSync('/tmp/recovery-verify.json', 'utf8'))
-          console.log(JSON.stringify({
-            evidence: 'PHYSICAL PRODUCTION SYSTEMD ACCEPTANCE',
-            recoveryStatus: result.status,
-            restartAttempts: result.restartAttempts,
-            resultingLifecycleState: verify.lifecycleState,
-            resultingHealthy: verify.healthy,
-            targetStartCount: Number(readFileSync('/tmp/recovery-acceptance/target/starts', 'utf8').trim().split(/\r?\n/).length),
-            callerSuppliedUnitRejected: true,
-          }, null, 2))
+
+          const root = '/tmp/recovery-acceptance'
+          const packageRoot = '/tmp/recovery-control-consumer/node_modules/@tjxjnoobie/recovery-agent'
+          const child = spawn(process.execPath, [`${packageRoot}/dist/cli/main.js`, 'mcp', './control.json'], {
+            cwd: process.cwd(),
+            env: process.env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
+          const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
+          const pending = new Map()
+          let nextId = 1
+          let stderr = ''
+          child.stderr.on('data', chunk => { stderr += String(chunk) })
+          lines.on('line', line => {
+            try {
+              const message = JSON.parse(line)
+              const waiter = pending.get(message.id)
+              if (waiter) { pending.delete(message.id); waiter(message) }
+            } catch {}
+          })
+
+          function request(method, params = {}) {
+            const id = nextId++
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(() => { pending.delete(id); reject(new Error(`MCP request timed out: ${method}`)) }, 20_000)
+              pending.set(id, message => { clearTimeout(timer); resolve(message) })
+              child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+            })
+          }
+
+          async function callTool(name, args) {
+            const outer = await request('tools/call', { name, arguments: args })
+            if (outer.error) throw new Error(JSON.stringify(outer.error))
+            if (outer.result?.isError) throw new Error(`MCP tool ${name} returned isError`)
+            const text = outer.result?.content?.find(entry => entry.type === 'text')?.text
+            if (typeof text !== 'string') throw new Error(`MCP tool ${name} returned no text payload`)
+            return JSON.parse(text)
+          }
+
+          try {
+            const init = await request('initialize', {
+              protocolVersion: '2025-11-25',
+              capabilities: {},
+              clientInfo: { name: 'physical-systemd-acceptance', version: '1' },
+            })
+            if (init.error) throw new Error(JSON.stringify(init.error))
+            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`)
+            const listed = await request('tools/list')
+            const names = new Set((listed.result?.tools || []).map(tool => tool.name))
+            for (const required of ['service_inspect', 'service_recover', 'recovery_readiness']) if (!names.has(required)) throw new Error(`MCP client did not observe ${required}`)
+            for (const forbidden of ['approve', 'reject', 'shell', 'systemctl']) if (names.has(forbidden)) throw new Error(`Unexpected privileged tool ${forbidden}`)
+
+            let inspect
+            for (let attempt = 0; attempt < 12; attempt++) {
+              try { inspect = await callTool('service_inspect', { nodeId: 'physical-node', serviceId: 'acceptance-service' }); if (inspect.healthy === true && inspect.lifecycleState === 'running') break } catch {}
+              await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+            if (inspect?.healthy !== true || inspect.lifecycleState !== 'running') throw new Error(`Initial inspection did not observe a healthy service. Node stderr: ${stderr}`)
+
+            execFileSync('sudo', ['systemctl', 'stop', 'recovery-acceptance.service'], { stdio: 'inherit' })
+            try {
+              execFileSync('sudo', ['systemctl', 'is-active', '--quiet', 'recovery-acceptance.service'], { stdio: 'ignore' })
+              throw new Error('Acceptance service remained active after the deliberate stop')
+            } catch (error) {
+              if (error?.message === 'Acceptance service remained active after the deliberate stop') throw error
+            }
+            const startsBefore = readFileSync(`${root}/target/starts`, 'utf8').trim().split(/\r?\n/).length
+            if (startsBefore !== 1) throw new Error(`Expected one initial service start, got ${startsBefore}`)
+
+            let recovered
+            for (let attempt = 0; attempt < 12; attempt++) {
+              try { recovered = await callTool('service_recover', { nodeId: 'physical-node', serviceId: 'acceptance-service' }); if (recovered.status === 'recovered' && recovered.snapshot?.healthy === true && recovered.snapshot?.lifecycleState === 'running' && recovered.restartAttempts === 1) break } catch {}
+              await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+            if (!recovered || recovered.status !== 'recovered' || recovered.snapshot?.healthy !== true || recovered.snapshot?.lifecycleState !== 'running' || recovered.restartAttempts !== 1) throw new Error(`Recovery did not produce the expected verified result: ${JSON.stringify(recovered)}`)
+
+            execFileSync('sudo', ['systemctl', 'is-active', '--quiet', 'recovery-acceptance.service'], { stdio: 'inherit' })
+            const startsAfter = readFileSync(`${root}/target/starts`, 'utf8').trim().split(/\r?\n/).length
+            if (startsAfter !== 2) throw new Error(`Expected exactly one restart, got ${startsAfter} total starts`)
+            const verify = await callTool('service_inspect', { nodeId: 'physical-node', serviceId: 'acceptance-service' })
+            if (verify.healthy !== true || verify.lifecycleState !== 'running') throw new Error(`Fresh verification was not healthy: ${JSON.stringify(verify)}`)
+
+            const injection = await request('tools/call', { name: 'service_recover', arguments: { nodeId: 'physical-node', serviceId: 'acceptance-service', unit: 'cron.service' } })
+            if (injection.result?.isError !== true && injection.error === undefined) throw new Error('Strict MCP schema accepted caller-supplied unit field')
+            console.log(JSON.stringify({ evidence: 'PHYSICAL PRODUCTION SYSTEMD ACCEPTANCE', recoveryStatus: recovered.status, restartAttempts: recovered.restartAttempts, resultingLifecycleState: verify.lifecycleState, resultingHealthy: verify.healthy, targetStartCount: startsAfter, callerSuppliedUnitRejected: true }, null, 2))
+          } finally {
+            lines.close()
+            child.kill('SIGTERM')
+          }
           NODE
 
       - name: Cleanup physical acceptance runtime
