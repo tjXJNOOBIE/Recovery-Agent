@@ -43,3 +43,7 @@ The repository also includes an authenticated HTTP/MCP adapter for the
 existing control-host process. It was physically smoke-tested against a real
 loopback Recovery node; public hosting and a judge endpoint remain deployment
 boundary work.
+
+Controlled hosted acceptance is available through Tavall service
+`recovery-agent-hosted-demo` at loopback MCP `/mcp`, backed by the real
+loopback node and systemd target. This is not a public judge endpoint.
