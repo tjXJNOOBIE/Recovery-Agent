@@ -315,7 +315,18 @@ jobs:
             fi
             sleep 1
           done
-          test "$healthy" -eq 1
+          if [ "$healthy" -ne 1 ]; then
+            echo 'Initial physical service inspection never observed a healthy connected node.' >&2
+            echo '--- inspector stderr ---' >&2
+            sed -n '1,240p' /tmp/recovery-inspector.err >&2 || true
+            echo '--- node stdout ---' >&2
+            sed -n '1,200p' "$root/logs/node.out" >&2 || true
+            echo '--- node stderr ---' >&2
+            sed -n '1,300p' "$root/logs/node.err" >&2 || true
+            echo '--- node process ---' >&2
+            ps -fu recovery-node-test >&2 || true
+            exit 1
+          fi
 
           sudo systemctl stop recovery-acceptance.service
           ! sudo systemctl is-active --quiet recovery-acceptance.service
