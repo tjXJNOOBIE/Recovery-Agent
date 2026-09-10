@@ -22,9 +22,9 @@ verification, and audit. Model-facing MCP never owns approval.
 ## Installation and testing
 
 See [README.md](README.md), [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md), and
-[docs/ARCHITECTURE.svg](docs/ARCHITECTURE.svg). The current PR #9 branch has
-the physical packaged systemd acceptance harness. The ordinary local demo is
-clearly simulated.
+[docs/ARCHITECTURE.svg](docs/ARCHITECTURE.svg). Main includes the physical
+packaged systemd acceptance harness and its captured GitHub run evidence. The
+ordinary local demo is clearly simulated.
 
 ## Pre-existing components disclosure
 
