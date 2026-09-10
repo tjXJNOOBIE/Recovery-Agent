@@ -99,6 +99,24 @@ recovery-agent mcp ./control.json
 
 Recovery Agent uses the official MCP TypeScript server SDK v2. Approval/rejection remain outside model-facing MCP.
 
+## Hosted MCP adapter
+
+The package includes a dependency-free HTTP adapter around the existing stdio
+control host:
+
+```bash
+RECOVERY_HTTP_CONTROL_CONFIG=/var/lib/recovery-agent/control.json \
+RECOVERY_HTTP_AUTH_TOKEN='generate-a-secret-at-least-16-characters' \
+RECOVERY_HTTP_PORT=7844 npm run serve:http
+```
+
+`GET /healthz` and `GET /readyz` are public readiness endpoints. `POST /mcp`
+requires bearer authentication on non-loopback binds and forwards only to the
+existing `recovery-agent mcp` process. It does not add approval, arbitrary
+shell, unit selection, or node mutation authority. The current controlled
+adapter smoke used a real loopback Recovery node and verified MCP initialize,
+16-tool discovery, `fleet_status`, and `service_inspect`.
+
 Current model-facing tools:
 
 - `fleet_status`

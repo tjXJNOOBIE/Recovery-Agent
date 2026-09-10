@@ -38,3 +38,8 @@ adapter, not a replacement for Tavall Java ownership.
 
 No AWS service is claimed until used by the final deployment. Add the public
 video URL and AWS Builder ID in Devpost as human submission fields.
+
+The repository also includes an authenticated HTTP/MCP adapter for the
+existing control-host process. It was physically smoke-tested against a real
+loopback Recovery node; public hosting and a judge endpoint remain deployment
+boundary work.

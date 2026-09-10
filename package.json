@@ -11,12 +11,13 @@
       "import": "./dist/index.js"
     }
   },
-  "bin": {
+    "bin": {
     "recovery-agent": "./dist/cli/main.js"
   },
   "files": [
     "dist",
     "state-authority-runtime",
+    "server",
     "examples",
     "README.md",
     "LICENSE"
@@ -31,6 +32,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \".test-dist/test/**/*.test.js\"",
     "check": "npm run typecheck && npm run test && npm run build",
     "demo": "npm run build && node dist/cli/main.js demo",
+    "serve:http": "node server/http.mjs",
     "prepack": "npm run build && npm run build:state-authority"
   },
   "dependencies": {
