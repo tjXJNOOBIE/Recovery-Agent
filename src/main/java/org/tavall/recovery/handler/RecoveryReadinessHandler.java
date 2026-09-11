@@ -2,7 +2,9 @@ package org.tavall.recovery.handler;
 
 import org.tavall.ai.core.annotation.AIFunction;
 import org.tavall.dependency.DependencyAccess;
+import org.tavall.recovery.budget.RecoveryAutomaticRestartBudgetEvaluator;
 import org.tavall.recovery.config.RecoveryControlConfiguration;
+import org.tavall.recovery.durability.RecoveryRestartIntentService;
 import org.tavall.recovery.node.RecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeSnapshot;
 import org.tavall.recovery.policy.RecoveryDecision;
@@ -14,27 +16,25 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Trusted read-only operator readiness surface.
- *
- * <p>This reports deterministic policy/dependency state but deliberately does not claim that a restart is
- * executable. Durable budget state, operation exclusion, restart-intent checkpointing, incident state, and
- * approval reconciliation must be Java-owned before mutation can be enabled.</p>
- */
+/** Trusted read-only operator readiness surface. */
 public final class RecoveryReadinessHandler implements DependencyAccess<RecoveryDependencies> {
     private final RecoveryPolicyResolver policyResolver = new RecoveryPolicyResolver();
+    private final RecoveryAutomaticRestartBudgetEvaluator budgetEvaluator =
+            new RecoveryAutomaticRestartBudgetEvaluator();
 
     @AIFunction(
             name = "recovery_readiness",
-            description = "Inspect deterministic restart policy and dependency health without performing any mutation."
+            description = "Inspect deterministic restart policy, durable rolling budget, and dependency health without performing any mutation."
     )
     public RecoveryReadinessReport inspectReadiness() {
         RecoveryDependencies dependencies = getInstance();
+        Instant observedAt = Instant.now();
+        DurableBudgetContext durableBudget = durableBudget(dependencies);
         List<ServiceReadiness> services = ServiceRecoveryPolicy.all(dependencies.configuration()).stream()
-                .map(policy -> inspectService(dependencies, policy))
+                .map(policy -> inspectService(dependencies, policy, durableBudget, observedAt))
                 .toList();
         return new RecoveryReadinessReport(
-                Instant.now().toString(),
+                observedAt.toString(),
                 services,
                 count(services, ReadinessStatus.HEALTHY),
                 count(services, ReadinessStatus.POLICY_ELIGIBLE),
@@ -42,14 +42,48 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
                 count(services, ReadinessStatus.HUMAN_REQUIRED),
                 count(services, ReadinessStatus.INVESTIGATE),
                 count(services, ReadinessStatus.UNREACHABLE),
+                durableBudget.available(),
+                durableBudget.error(),
                 false
         );
     }
 
+    private DurableBudgetContext durableBudget(RecoveryDependencies dependencies) {
+        if (dependencies.restartIntentService().isEmpty()) {
+            return new DurableBudgetContext(
+                    false,
+                    List.of(),
+                    "Recovery durable state is not configured"
+            );
+        }
+        RecoveryRestartIntentService service = dependencies.restartIntentService().orElseThrow();
+        if (!service.isAvailable()) {
+            return new DurableBudgetContext(
+                    false,
+                    List.of(),
+                    "Recovery durable state authority is unavailable"
+            );
+        }
+        try {
+            return new DurableBudgetContext(true, service.loadAttempts(), null);
+        } catch (RuntimeException exception) {
+            return new DurableBudgetContext(
+                    false,
+                    List.of(),
+                    "Recovery durable state could not be loaded: " + message(exception)
+            );
+        }
+    }
+
     private ServiceReadiness inspectService(
             RecoveryDependencies dependencies,
-            ServiceRecoveryPolicy policy
+            ServiceRecoveryPolicy policy,
+            DurableBudgetContext durableBudget,
+            Instant observedAt
     ) {
+        RecoveryAutomaticRestartBudgetEvaluator.BudgetSnapshot budget = durableBudget.available()
+                ? budgetEvaluator.inspect(policy, durableBudget.attempts(), observedAt)
+                : null;
         RecoveryNodeSnapshot.RecoveryServiceSnapshot target;
         try {
             target = dependencies.gateways().require(policy.nodeId()).inspectService(policy.serviceId());
@@ -64,6 +98,9 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
                     policy.restartAllowed(),
                     policy.maxRestartAttempts(),
                     policy.restartBudgetWindowSeconds(),
+                    durableBudget.available(),
+                    budget,
+                    false,
                     false,
                     false,
                     List.of(),
@@ -94,10 +131,24 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
         } else if (decision == RecoveryDecision.INVESTIGATE) {
             reasons.add("Observed state does not satisfy deterministic automatic-restart policy");
         }
+        if (!durableBudget.available()) {
+            reasons.add(durableBudget.error() + "; automatic mutation is disabled");
+        } else if (budget != null && budget.remainingAttempts() == 0 && policy.maxRestartAttempts() > 0) {
+            reasons.add(
+                    "Automatic restart budget is exhausted: " + budget.usedAttempts() + "/"
+                            + budget.maximumAttempts() + " used in " + budget.windowMillis() + "ms"
+            );
+        }
 
         boolean policyEligible = decision == RecoveryDecision.RESTART && dependencyProblems.isEmpty();
-        if (policyEligible) {
-            reasons.add("Policy/dependency preconditions permit restart evaluation, but mutation remains disabled until durable budget, exclusion, checkpoint, incident, and approval authority are ported to Java");
+        boolean automaticRecoveryPreconditionsSatisfied = policyEligible
+                && durableBudget.available()
+                && budget != null
+                && budget.remainingAttempts() > 0;
+        if (automaticRecoveryPreconditionsSatisfied) {
+            reasons.add(
+                    "Policy, dependency, and durable budget preconditions pass, but mutation remains disabled until operation exclusion, verified effects, incidents, and approval reconciliation are ported to Java"
+            );
         }
 
         return new ServiceReadiness(
@@ -110,7 +161,10 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
                 policy.restartAllowed(),
                 policy.maxRestartAttempts(),
                 policy.restartBudgetWindowSeconds(),
+                durableBudget.available(),
+                budget,
                 policyEligible,
+                automaticRecoveryPreconditionsSatisfied,
                 false,
                 dependencyReadiness,
                 List.copyOf(reasons)
@@ -196,6 +250,8 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
             int humanRequiredServices,
             int investigateServices,
             int unreachableServices,
+            boolean durableStateAvailable,
+            String durableStateError,
             boolean mutationCutoverComplete
     ) {
         public RecoveryReadinessReport {
@@ -213,7 +269,10 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
             boolean restartAllowed,
             int maximumRestartAttempts,
             int restartBudgetWindowSeconds,
+            boolean durableStateAvailable,
+            RecoveryAutomaticRestartBudgetEvaluator.BudgetSnapshot automaticBudget,
             boolean restartPolicyEligible,
+            boolean automaticRecoveryPreconditionsSatisfied,
             boolean mutationAvailable,
             List<DependencyReadiness> dependencies,
             List<String> reasons
@@ -232,5 +291,15 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
             String detail,
             String error
     ) {
+    }
+
+    private record DurableBudgetContext(
+            boolean available,
+            List<RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt> attempts,
+            String error
+    ) {
+        private DurableBudgetContext {
+            attempts = List.copyOf(attempts);
+        }
     }
 }
