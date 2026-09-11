@@ -21,7 +21,9 @@ class HttpRecoveryNodeGatewayTest {
         AtomicReference<String> path = new AtomicReference<>();
         AtomicReference<String> authorization = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/v1/services/api%20worker/restart", exchange -> {
+        // HttpServer context matching operates on the decoded path. Mount the stable prefix and assert the
+        // exact encoded wire path from the exchange instead of baking percent encoding into the context key.
+        server.createContext("/v1/services/", exchange -> {
             method.set(exchange.getRequestMethod());
             path.set(exchange.getRequestURI().getRawPath());
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
