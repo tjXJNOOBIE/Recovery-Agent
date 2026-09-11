@@ -7,6 +7,10 @@ on:
       - main
       - "working/**"
 
+concurrency:
+  group: java-migration-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: read
@@ -87,11 +91,11 @@ jobs:
         working-directory: function-catalog
         run: ./gradlew --no-daemon clean check publishToMavenLocal stageRuntime
 
-      - name: Build standalone Strands bridge
+      - name: Validate standalone Strands bridge
         working-directory: strands-bridge
         run: |
           npm ci --ignore-scripts
-          npm run build
+          npm run check:real
 
       - name: Configure physical bridge integration
         shell: bash
@@ -101,4 +105,21 @@ jobs:
 
       - name: Validate Java Recovery slice
         working-directory: Recovery-Agent
-        run: gradle --no-daemon -Dstrands.bridge.integration.required=true clean test build
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon -Dstrands.bridge.integration.required=true clean test build 2>&1 | tee java-migration.log
+
+      - name: Preserve Java migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-java-migration-diagnostics
+          path: |
+            Recovery-Agent/java-migration.log
+            Recovery-Agent/build/reports/**
+            Recovery-Agent/build/test-results/**
+            Recovery-Agent/state-authority/build/reports/**
+            Recovery-Agent/state-authority/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 7
