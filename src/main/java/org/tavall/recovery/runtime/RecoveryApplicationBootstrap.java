@@ -11,18 +11,21 @@ import org.tavall.dependency.maps.DependencyMap;
 import org.tavall.recovery.agent.RecoveryStrandsConfigurationResolver;
 import org.tavall.recovery.config.RecoveryControlConfiguration;
 import org.tavall.recovery.config.RecoveryControlConfigurationReader;
+import org.tavall.recovery.durability.RecoveryRestartIntentService;
 import org.tavall.recovery.handler.RecoveryAgentInvocationHandler;
 import org.tavall.recovery.handler.RecoveryObservationHandler;
 import org.tavall.recovery.handler.RecoveryReadinessHandler;
 import org.tavall.recovery.node.HttpRecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeGatewayResolver;
+import org.tavall.recovery.state.RecoveryStateAuthorityBuilder;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** Java composition root for the Recovery Agent control process. */
@@ -59,6 +62,10 @@ public final class RecoveryApplicationBootstrap {
 
         List<RecoveryNodeGateway> gateways = buildGateways(configuration, safeEnvironment, objectMapper);
         RecoveryNodeGatewayResolver gatewayResolver = new RecoveryNodeGatewayResolver(gateways);
+        Optional<RecoveryRestartIntentService> restartIntentService =
+                new RecoveryStateAuthorityBuilder(safeEnvironment, objectMapper)
+                        .buildIfConfigured()
+                        .map(authority -> new RecoveryRestartIntentService(authority, objectMapper));
         StrandsAgentProviderConfiguration strandsConfiguration = new RecoveryStrandsConfigurationResolver(safeEnvironment)
                 .resolve();
         StrandsAgentProvider strandsProvider = new StrandsAgentProvider(strandsConfiguration);
@@ -75,7 +82,8 @@ public final class RecoveryApplicationBootstrap {
                 configuration,
                 gatewayResolver,
                 agentRuntime,
-                objectMapper
+                objectMapper,
+                restartIntentService
         );
         DependencyMap.getDependencyMap().registerInstance(RecoveryDependencies.class, dependencies);
 
@@ -96,7 +104,8 @@ public final class RecoveryApplicationBootstrap {
                     operatorServer,
                     operatorView,
                     strandsProvider,
-                    gateways
+                    gateways,
+                    restartIntentService
             );
         } catch (RuntimeException exception) {
             if (operatorView != null) {
@@ -115,6 +124,13 @@ public final class RecoveryApplicationBootstrap {
             } catch (RuntimeException closeFailure) {
                 exception.addSuppressed(closeFailure);
             }
+            restartIntentService.ifPresent(service -> {
+                try {
+                    service.close();
+                } catch (RuntimeException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
+            });
             closeGateways(gateways, exception);
             throw exception;
         }
