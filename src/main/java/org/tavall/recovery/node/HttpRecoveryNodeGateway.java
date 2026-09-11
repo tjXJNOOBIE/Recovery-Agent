@@ -47,9 +47,25 @@ public final class HttpRecoveryNodeGateway implements RecoveryNodeGateway {
 
     @Override
     public RecoveryNodeSnapshot.RecoveryServiceSnapshot inspectService(String serviceId) {
-        String encoded = URLEncoder.encode(requireText(serviceId, "serviceId"), StandardCharsets.UTF_8)
+        return request(
+                "GET",
+                "/v1/services/" + encodeServiceId(serviceId),
+                RecoveryNodeSnapshot.RecoveryServiceSnapshot.class
+        );
+    }
+
+    @Override
+    public RecoveryServiceActionResult restartService(String serviceId) {
+        return request(
+                "POST",
+                "/v1/services/" + encodeServiceId(serviceId) + "/restart",
+                RecoveryServiceActionResult.class
+        );
+    }
+
+    private String encodeServiceId(String serviceId) {
+        return URLEncoder.encode(requireText(serviceId, "serviceId"), StandardCharsets.UTF_8)
                 .replace("+", "%20");
-        return request("GET", "/v1/services/" + encoded, RecoveryNodeSnapshot.RecoveryServiceSnapshot.class);
     }
 
     private <T> T request(String method, String path, Class<T> responseType) {
