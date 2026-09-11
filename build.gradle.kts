@@ -37,6 +37,7 @@ val functionCatalogVersion = providers.gradleProperty("functionCatalogVersion").
 val tavallDiVersion = providers.gradleProperty("tavallDiVersion").orElse("1.0.0")
 
 dependencies {
+    implementation(project(":state-authority"))
     implementation("org.tavall:ai-core:${functionCatalogVersion.get()}")
     implementation("org.tavall:agent-runtime:${functionCatalogVersion.get()}")
     implementation("org.tavall:strands-agent-provider:${functionCatalogVersion.get()}")
