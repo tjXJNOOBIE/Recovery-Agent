@@ -2,6 +2,7 @@ package org.tavall.recovery.durability;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.tavall.recovery.budget.RecoveryAutomaticRestartBudgetEvaluator;
 import org.tavall.recovery.policy.ServiceRecoveryPolicy;
 import org.tavall.recovery.state.RecoveryStateAuthority;
 import org.tavall.recovery.state.RecoveryStateAuthorityBuilder;
@@ -38,8 +39,8 @@ class RecoveryRestartIntentServiceTest {
                     service.checkpointAutomaticRestartIntent(policy, at);
 
             assertThat(persisted.revision()).isEqualTo(1);
-            assertThat(persisted.snapshot().path("restartAttempts")).hasSize(1);
-            assertThat(persisted.snapshot().path("audit")).hasSize(1);
+            assertThat(persisted.snapshot().path("restartAttempts").size()).isEqualTo(1);
+            assertThat(persisted.snapshot().path("audit").size()).isEqualTo(1);
             assertThat(persisted.snapshot().path("audit").get(0).path("action").asText())
                     .isEqualTo("automatic_restart_intent");
             assertThat(persisted.snapshot().path("audit").get(0).path("nodeId").asText())
@@ -50,7 +51,7 @@ class RecoveryRestartIntentServiceTest {
 
         try (RecoveryRestartIntentService reopened = service(jdbcUrl, false)) {
             assertThat(reopened.loadAttempts()).containsExactly(
-                    new org.tavall.recovery.budget.RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt(
+                    new RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt(
                             "east",
                             "api",
                             at.toEpochMilli()
@@ -81,8 +82,8 @@ class RecoveryRestartIntentServiceTest {
 
             assertThat(first.revision()).isEqualTo(1);
             assertThat(second.revision()).isEqualTo(2);
-            assertThat(second.snapshot().path("restartAttempts")).hasSize(2);
-            assertThat(second.snapshot().path("audit")).hasSize(2);
+            assertThat(second.snapshot().path("restartAttempts").size()).isEqualTo(2);
+            assertThat(second.snapshot().path("audit").size()).isEqualTo(2);
             assertThat(service.loadAttempts()).hasSize(2);
         }
     }
