@@ -13,13 +13,12 @@ import org.tavall.recovery.config.RecoveryControlConfiguration;
 import org.tavall.recovery.config.RecoveryControlConfigurationReader;
 import org.tavall.recovery.handler.RecoveryAgentInvocationHandler;
 import org.tavall.recovery.handler.RecoveryObservationHandler;
+import org.tavall.recovery.handler.RecoveryReadinessHandler;
 import org.tavall.recovery.node.HttpRecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeGatewayResolver;
 
-import java.net.http.HttpClient;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +36,7 @@ public final class RecoveryApplicationBootstrap {
             "fleet_status",
             "node_inspect",
             "service_inspect",
+            "recovery_readiness",
             "recovery_invoke"
     );
 
@@ -84,6 +84,7 @@ public final class RecoveryApplicationBootstrap {
         try {
             catalog.registerInstances(List.of(
                     new RecoveryObservationHandler(),
+                    new RecoveryReadinessHandler(),
                     new RecoveryAgentInvocationHandler()
             ));
             operatorView = new AIFunctionCatalogView(
