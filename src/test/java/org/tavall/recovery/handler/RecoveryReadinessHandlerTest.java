@@ -8,20 +8,34 @@ import org.tavall.ai.core.catalog.AIFunctionCatalog;
 import org.tavall.ai.core.catalog.AIFunctionCatalogView;
 import org.tavall.dependency.maps.DependencyMap;
 import org.tavall.recovery.config.RecoveryControlConfiguration;
+import org.tavall.recovery.durability.RecoveryRestartIntentService;
 import org.tavall.recovery.node.RecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeGatewayResolver;
 import org.tavall.recovery.node.RecoveryNodeSnapshot;
+import org.tavall.recovery.policy.ServiceRecoveryPolicy;
 import org.tavall.recovery.runtime.RecoveryDependencies;
+import org.tavall.recovery.state.RecoveryStateAuthority;
+import org.tavall.recovery.state.RecoveryStateAuthorityBuilder;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RecoveryReadinessHandlerTest {
+    private RecoveryRestartIntentService restartIntentService;
+
     @AfterEach
     void clearDependencies() {
         DependencyMap.getDependencyMap().removeDependency(RecoveryDependencies.class);
+        if (restartIntentService != null) {
+            restartIntentService.close();
+            restartIntentService = null;
+        }
     }
 
     @Test
@@ -36,12 +50,43 @@ class RecoveryReadinessHandlerTest {
 
         assertThat(api.status()).isEqualTo(RecoveryReadinessHandler.ReadinessStatus.POLICY_ELIGIBLE);
         assertThat(api.restartPolicyEligible()).isTrue();
+        assertThat(api.durableStateAvailable()).isFalse();
+        assertThat(api.automaticRecoveryPreconditionsSatisfied()).isFalse();
         assertThat(api.mutationAvailable()).isFalse();
         assertThat(api.dependencies()).singleElement().satisfies(dependency -> {
             assertThat(dependency.reachable()).isTrue();
             assertThat(dependency.healthy()).isTrue();
         });
         assertThat(report.mutationCutoverComplete()).isFalse();
+    }
+
+    @Test
+    void exhaustedDurableBudgetBlocksAutomaticRecoveryDespiteHealthyDependencies() {
+        restartIntentService = durableRestartIntentService();
+        ServiceRecoveryPolicy apiPolicy = ServiceRecoveryPolicy.resolve(configuration(), "east", "api");
+        Instant now = Instant.now();
+        restartIntentService.checkpointAutomaticRestartIntent(apiPolicy, now.minusSeconds(10));
+        restartIntentService.checkpointAutomaticRestartIntent(apiPolicy, now.minusSeconds(5));
+        register(
+                new FixedGateway(
+                        snapshot("api", "failed", false),
+                        snapshot("db", "running", true)
+                ),
+                Optional.of(restartIntentService)
+        );
+
+        RecoveryReadinessHandler.RecoveryReadinessReport report = new RecoveryReadinessHandler().inspectReadiness();
+        RecoveryReadinessHandler.ServiceReadiness api = service(report, "api");
+
+        assertThat(report.durableStateAvailable()).isTrue();
+        assertThat(api.durableStateAvailable()).isTrue();
+        assertThat(api.restartPolicyEligible()).isTrue();
+        assertThat(api.automaticBudget()).isNotNull();
+        assertThat(api.automaticBudget().usedAttempts()).isEqualTo(2);
+        assertThat(api.automaticBudget().remainingAttempts()).isZero();
+        assertThat(api.automaticRecoveryPreconditionsSatisfied()).isFalse();
+        assertThat(api.mutationAvailable()).isFalse();
+        assertThat(api.reasons()).anyMatch(reason -> reason.contains("budget is exhausted"));
     }
 
     @Test
@@ -78,7 +123,14 @@ class RecoveryReadinessHandlerTest {
         assertThat(api.reasons()).anyMatch(reason -> reason.contains("automatic mutation is refused"));
     }
 
-    private static void register(RecoveryNodeGateway gateway) {
+    private void register(RecoveryNodeGateway gateway) {
+        register(gateway, Optional.empty());
+    }
+
+    private void register(
+            RecoveryNodeGateway gateway,
+            Optional<RecoveryRestartIntentService> restartIntentService
+    ) {
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
         RecoveryControlConfiguration configuration = configuration();
         AIFunctionCatalog catalog = new AIFunctionCatalog(objectMapper);
@@ -93,9 +145,26 @@ class RecoveryReadinessHandlerTest {
                         configuration,
                         new RecoveryNodeGatewayResolver(List.of(gateway)),
                         agentRuntime,
-                        objectMapper
+                        objectMapper,
+                        restartIntentService
                 )
         );
+    }
+
+    private RecoveryRestartIntentService durableRestartIntentService() {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        String jdbcUrl = "jdbc:h2:mem:recovery_readiness_" + UUID.randomUUID()
+                + ";MODE=PostgreSQL;DB_CLOSE_DELAY=-1";
+        RecoveryStateAuthority authority = new RecoveryStateAuthorityBuilder(
+                Map.of(
+                        "RECOVERY_STATE_JDBC_URL", jdbcUrl,
+                        "RECOVERY_STATE_DB_USERNAME", "sa",
+                        "RECOVERY_STATE_DB_PASSWORD", "",
+                        "RECOVERY_STATE_GENERATE_SCHEMA", "true"
+                ),
+                objectMapper
+        ).buildRequired();
+        return new RecoveryRestartIntentService(authority, objectMapper);
     }
 
     private static RecoveryControlConfiguration configuration() {
