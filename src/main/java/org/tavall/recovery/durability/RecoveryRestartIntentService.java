@@ -8,6 +8,7 @@ import org.tavall.recovery.budget.RecoveryAutomaticRestartBudgetEvaluator;
 import org.tavall.recovery.policy.ServiceRecoveryPolicy;
 import org.tavall.recovery.state.RecoveryStateAuthority;
 import org.tavall.recovery.state.RecoveryStateLoadResult;
+import org.tavall.recovery.state.RecoveryStateStaleRevisionException;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,10 +19,13 @@ import java.util.UUID;
 /**
  * In-process Java durability boundary for automatic restart intent.
  *
- * <p>Attempt consumption and its audit entry are committed atomically under the state authority's CAS revision
- * before a node effect may be executed. This service deliberately performs no node mutation.</p>
+ * <p>Budget evaluation, attempt consumption, and the audit entry are committed atomically under the state
+ * authority's CAS revision before a node effect may execute. CAS conflicts force a fresh load and budget
+ * re-evaluation, so concurrent Recovery processes cannot oversubscribe the rolling restart budget.</p>
  */
 public final class RecoveryRestartIntentService implements AutoCloseable {
+    private static final int MAX_RESERVATION_RETRIES = 8;
+
     private final RecoveryStateAuthority authority;
     private final ObjectMapper objectMapper;
 
@@ -39,49 +43,118 @@ public final class RecoveryRestartIntentService implements AutoCloseable {
         return parseAttempts(loaded.snapshot().path("restartAttempts"));
     }
 
+    /**
+     * Reserve one automatic restart attempt under the durable rolling budget.
+     *
+     * <p>An allowed result is already durable and therefore safe to use as the write-ahead intent for a later
+     * node mutation. A denied result performs no write.</p>
+     */
+    public RestartIntentReservation reserveAutomaticRestartIntent(
+            ServiceRecoveryPolicy policy,
+            Instant at,
+            RecoveryAutomaticRestartBudgetEvaluator budgetEvaluator
+    ) {
+        Objects.requireNonNull(policy, "policy");
+        Instant safeAt = Objects.requireNonNull(at, "at");
+        RecoveryAutomaticRestartBudgetEvaluator evaluator = Objects.requireNonNull(
+                budgetEvaluator,
+                "budgetEvaluator"
+        );
+
+        RecoveryStateStaleRevisionException lastConflict = null;
+        for (int retry = 0; retry < MAX_RESERVATION_RETRIES; retry++) {
+            RecoveryStateLoadResult loaded = authority.load();
+            List<RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt> attempts =
+                    parseAttempts(loaded.snapshot().path("restartAttempts"));
+            RecoveryAutomaticRestartBudgetEvaluator.ConsumptionDecision decision =
+                    evaluator.evaluateConsumption(policy, attempts, safeAt);
+            if (!decision.allowed()) {
+                return new RestartIntentReservation(
+                        false,
+                        loaded.revision(),
+                        decision.snapshot(),
+                        null,
+                        loaded.snapshot().deepCopy()
+                );
+            }
+
+            ObjectNode candidate = requireObject(loaded.snapshot()).deepCopy();
+            RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt attempt =
+                    Objects.requireNonNull(decision.attemptToPersist(), "attemptToPersist");
+            appendRestartAttempt(candidate, attempt);
+            appendAudit(candidate, policy, safeAt);
+
+            try {
+                RecoveryStateLoadResult committed = authority.commit(loaded.revision(), candidate);
+                return new RestartIntentReservation(
+                        true,
+                        committed.revision(),
+                        decision.snapshot(),
+                        attempt,
+                        committed.snapshot().deepCopy()
+                );
+            } catch (RecoveryStateStaleRevisionException conflict) {
+                lastConflict = conflict;
+            }
+        }
+
+        throw new IllegalStateException(
+                "Recovery restart intent reservation could not acquire a durable CAS revision after "
+                        + MAX_RESERVATION_RETRIES + " attempts",
+                lastConflict
+        );
+    }
+
+    /**
+     * Compatibility helper for callers that already proved a reservation should be available.
+     *
+     * <p>Unlike the earlier implementation this cannot overrun the configured rolling budget.</p>
+     */
     public PersistedRestartIntent checkpointAutomaticRestartIntent(
             ServiceRecoveryPolicy policy,
             Instant at
     ) {
-        Objects.requireNonNull(policy, "policy");
-        Instant safeAt = Objects.requireNonNull(at, "at");
-        RecoveryStateLoadResult loaded = authority.load();
-        ObjectNode candidate = requireObject(loaded.snapshot()).deepCopy();
-
-        RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt attempt =
-                new RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt(
-                        policy.nodeId(),
-                        policy.serviceId(),
-                        safeAt.toEpochMilli()
-                );
-        ObjectNode attemptJson = candidate.withArray("restartAttempts").addObject();
-        attemptJson.put("nodeId", attempt.nodeId());
-        attemptJson.put("serviceId", attempt.serviceId());
-        attemptJson.put("atMs", attempt.atEpochMilli());
-
-        ObjectNode audit = candidate.withArray("audit").addObject();
-        audit.put("id", UUID.randomUUID().toString());
-        audit.put("at", safeAt.toString());
-        audit.put("actor", "recovery-agent");
-        audit.put("action", "automatic_restart_intent");
-        audit.put(
-                "summary",
-                "Persisted automatic restart intent before executing the node mutation"
+        RestartIntentReservation reservation = reserveAutomaticRestartIntent(
+                policy,
+                at,
+                new RecoveryAutomaticRestartBudgetEvaluator()
         );
-        audit.put("nodeId", policy.nodeId());
-        audit.put("serviceId", policy.serviceId());
-
-        RecoveryStateLoadResult committed = authority.commit(loaded.revision(), candidate);
+        if (!reservation.allowed()) {
+            throw new IllegalStateException(
+                    "Automatic restart budget exhausted for " + policy.nodeId() + "/" + policy.serviceId()
+            );
+        }
         return new PersistedRestartIntent(
-                committed.revision(),
-                attempt,
-                committed.snapshot().deepCopy()
+                reservation.revision(),
+                Objects.requireNonNull(reservation.attempt(), "attempt"),
+                reservation.snapshot()
         );
     }
 
     @Override
     public void close() {
         authority.close();
+    }
+
+    private void appendRestartAttempt(
+            ObjectNode candidate,
+            RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt attempt
+    ) {
+        ObjectNode attemptJson = candidate.withArray("restartAttempts").addObject();
+        attemptJson.put("nodeId", attempt.nodeId());
+        attemptJson.put("serviceId", attempt.serviceId());
+        attemptJson.put("atMs", attempt.atEpochMilli());
+    }
+
+    private void appendAudit(ObjectNode candidate, ServiceRecoveryPolicy policy, Instant at) {
+        ObjectNode audit = candidate.withArray("audit").addObject();
+        audit.put("id", UUID.randomUUID().toString());
+        audit.put("at", at.toString());
+        audit.put("actor", "recovery-agent");
+        audit.put("action", "automatic_restart_intent");
+        audit.put("summary", "Persisted automatic restart intent before executing the node mutation");
+        audit.put("nodeId", policy.nodeId());
+        audit.put("serviceId", policy.serviceId());
     }
 
     private List<RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt> parseAttempts(JsonNode attemptsNode) {
@@ -126,6 +199,28 @@ public final class RecoveryRestartIntentService implements AutoCloseable {
             );
         }
         return node.textValue().trim();
+    }
+
+    public record RestartIntentReservation(
+            boolean allowed,
+            long revision,
+            RecoveryAutomaticRestartBudgetEvaluator.BudgetSnapshot budget,
+            RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt attempt,
+            JsonNode snapshot
+    ) {
+        public RestartIntentReservation {
+            if (revision < 0) {
+                throw new IllegalArgumentException("revision must be non-negative");
+            }
+            budget = Objects.requireNonNull(budget, "budget");
+            if (allowed && attempt == null) {
+                throw new IllegalArgumentException("allowed restart reservation requires an attempt");
+            }
+            if (!allowed && attempt != null) {
+                throw new IllegalArgumentException("denied restart reservation must not contain an attempt");
+            }
+            snapshot = Objects.requireNonNull(snapshot, "snapshot").deepCopy();
+        }
     }
 
     public record PersistedRestartIntent(
