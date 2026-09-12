@@ -29,7 +29,7 @@
     "prepack": "npm run package:runtime"
   },
   "dependencies": {
-    "@tjxjnoobie/strands-bridge": "github:tjXJNOOBIE/strands-bridge#34b2d0129d362edc10b9b540114e81a5cabf082f"
+    "@tjxjnoobie/strands-bridge": "https://github.com/tjXJNOOBIE/strands-bridge/archive/34b2d0129d362edc10b9b540114e81a5cabf082f.tar.gz"
   },
   "devDependencies": {
     "@modelcontextprotocol/server": "2.0.0",
