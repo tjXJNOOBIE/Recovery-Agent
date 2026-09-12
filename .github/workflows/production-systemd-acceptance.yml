@@ -192,6 +192,20 @@ jobs:
             "$node_bin" "$GITHUB_WORKSPACE/dist/cli/main.js" node "$root/node/node.json" \
             >"$root/logs/node.out" 2>"$root/logs/node.err" &
           echo $! > "$root/node-agent.pid"
+          sleep 2
+          if ! kill -0 "$(cat "$root/node-agent.pid")" 2>/dev/null; then
+            sed -n '1,240p' "$root/logs/node.err" >&2 || true
+            sed -n '1,120p' "$root/logs/node.out" >&2 || true
+            exit 1
+          fi
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $RECOVERY_NODE_TOKEN" \
+            http://127.0.0.1:47844/v1/node >/tmp/recovery-node-contract.json || {
+              sed -n '1,240p' "$root/logs/node.err" >&2 || true
+              sed -n '1,120p' "$root/logs/node.out" >&2 || true
+              exit 1
+          }
+          grep -q '"nodeId":"physical-node"' /tmp/recovery-node-contract.json
           node ./node_modules/@tjxjnoobie/recovery-agent/bin/recovery-agent.mjs doctor
           node ./node_modules/@tjxjnoobie/recovery-agent/bin/recovery-agent.mjs mcp ./control.json \
             >"$root/logs/control.out" 2>"$root/logs/control.err" &
