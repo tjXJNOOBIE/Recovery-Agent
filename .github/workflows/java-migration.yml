@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TavallStudios/function-catalog
-          ref: working/strands-mcp-agent-provider
+          ref: main
           path: function-catalog
 
       - name: Checkout Tavall DI
@@ -52,14 +52,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TavallStudios/Tavall-Architecture-Tests
-          ref: working/modularize-architecture-tests-20260907
+          ref: main
           path: Tavall-Architecture-Tests
 
       - name: Checkout standalone Strands bridge
         uses: actions/checkout@v4
         with:
           repository: tjXJNOOBIE/strands-bridge
-          ref: working/java-first-strands-mcp
+          ref: main
           path: strands-bridge
 
       - uses: actions/setup-java@v5
@@ -89,7 +89,7 @@ jobs:
 
       - name: Validate shared Function Catalog provider
         working-directory: function-catalog
-        run: ./gradlew --no-daemon clean check publishToMavenLocal stageRuntime
+        run: ./gradlew --no-daemon -PtavallVersion=1.0.3 clean check publishToMavenLocal stageRuntime
 
       - name: Validate standalone Strands bridge
         working-directory: strands-bridge
