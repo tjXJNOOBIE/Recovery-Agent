@@ -1,12 +1,12 @@
 node_modules/
 dist/
 .test-dist/
-state-authority-runtime/
+/state-authority-runtime/
 build/
 state-authority/build/
 .gradle/
 .test-dist/
-runtime/
+/runtime/
 runtime-manifest.json
 .env
 .env.*
