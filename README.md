@@ -4,7 +4,7 @@ Recovery Agent is a control-host recovery runtime for Linux services. AI stays o
 
 **Agents for Humans track:** Professional
 
-> **Current status:** E2E Recovery runtime with durable control state and production outbound mTLS node transport. Deterministic recovery, application probes, Linux/node/certificate/deployment watches, Recovery Readiness, semantic watches, dependency-aware rolling budgets, bounded Strands roles, accountable local operator principals, restart-safe schema-v2 durability, terminal-history retention, packaged control-host installation, TLS 1.3 mutual authentication, node/control certificate pinning, bounded reconnect, and credential-file rotation are implemented. GitHub validation physically exercises Node 22, Java 25, PostgreSQL 17, packaged installation, and real generated-certificate transport. Authorized real-model Recovery validation, broader production actions/adapters, and current-host/Inspector acceptance remain promotion gates.
+> **Current status:** E2E Recovery runtime with durable control state and production outbound mTLS node transport. Deterministic recovery, application probes, Linux/node/certificate/deployment watches, Recovery Readiness, semantic watches, dependency-aware rolling budgets, bounded Strands roles, accountable local operator principals, restart-safe schema-v2 durability, terminal-history retention, packaged control-host installation, TLS 1.3 mutual authentication, node/control certificate pinning, bounded reconnect, and credential-file rotation are implemented. GitHub validation physically exercises Node 22, Java 25, PostgreSQL 17, packaged installation, and real generated-certificate transport. A committed real-development failure/recovery video is recorded in the evidence manifest. Authorized real-model Recovery validation, broader production actions/adapters, and current-host/Inspector acceptance remain promotion gates.
 
 ## Runtime shape
 
@@ -288,7 +288,7 @@ Linux node evidence covers memory, swap, filesystem bytes/inodes, root read-only
 
 ## Strands boundary
 
-Recovery Agent depends on `@tjxjnoobie/strands-bridge`, pinned to merged `main` commit `0492c67f29ea271db9a2405770142de6fdfcd8b5`, rather than directly on `@strands-agents/sdk`.
+Recovery Agent depends on `@tjxjnoobie/strands-bridge`, pinned to packaging-ready commit `34b2d0129d362edc10b9b540114e81a5cabf082f`, rather than directly on `@strands-agents/sdk`.
 
 For local development without a model API key, a user with a ChatGPT subscription can set `RECOVERY_AGENT_MODEL_ID=codex-cli`. The shared bridge invokes the locally authenticated `codex` CLI as a bounded model subprocess while native Strands retains the tool loop and deterministic recovery authority. Run `codex login` once first. This is a local/user-owned mode and is not a hosted-service credential.
 

@@ -45,3 +45,6 @@ The current Tavall service is `recovery-agent-hosted-demo`, running merged
 commit `e927658826b6640c51e1b78c9022d86854833220`. Tavall start/restart,
 health, MCP initialize, 16-tool discovery, `fleet_status`, and
 `service_inspect` were physically verified against the real loopback node.
+The committed real-development service failure/recovery footage is recorded in
+docs/evidence/VIDEO_EVIDENCE_MANIFEST.json; the MP4 is stored outside Git
+under the Tavall campaign video-evidence directory.
