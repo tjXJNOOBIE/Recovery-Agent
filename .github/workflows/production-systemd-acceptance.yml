@@ -131,7 +131,7 @@ jobs:
           test "$unauthorized_status" -ne 0
           grep -q 'rejected unsupported operation/target' /tmp/recovery-unauthorized-err
 
-          cat > "$root/node/node.json" <<'JSON'
+          sudo tee "$root/node/node.json" >/dev/null <<'JSON'
           {
             "nodeId": "physical-node",
             "transport": {
@@ -148,6 +148,7 @@ jobs:
             ]
           }
           JSON
+          sudo chown recovery-node-test:recovery-node-test "$root/node/node.json"
           cat > /tmp/recovery-control-consumer.json <<'JSON'
           {
             "transport": {"mode": "loopback_http"},
