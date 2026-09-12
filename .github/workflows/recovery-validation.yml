@@ -28,7 +28,7 @@ jobs:
         run: npm install
 
       - name: Run strict checks and tests
-        run: npm run check
+        run: npm run check:legacy
 
       - name: Verify npm package shape
         run: npm pack --dry-run --ignore-scripts --json
@@ -37,5 +37,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          output="$(npm run --silent demo)"
+          output="$(npm run --silent demo:legacy)"
           printf '%s\n' "$output" | grep -F 'SIMULATED DEMONSTRATION'

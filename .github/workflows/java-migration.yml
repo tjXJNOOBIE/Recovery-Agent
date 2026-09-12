@@ -1,0 +1,125 @@
+name: Java migration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "working/**"
+
+concurrency:
+  group: java-migration-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_ACTOR: ${{ github.actor }}
+    steps:
+      - name: Checkout Recovery Agent
+        uses: actions/checkout@v4
+        with:
+          path: Recovery-Agent
+
+      - name: Checkout Function Catalog migration dependency
+        uses: actions/checkout@v4
+        with:
+          repository: TavallStudios/function-catalog
+          ref: main
+          path: function-catalog
+
+      - name: Checkout Tavall DI
+        uses: actions/checkout@v4
+        with:
+          repository: TavallStudios/tavall-di
+          ref: main
+          path: tavall-di
+
+      - name: Checkout Tavall Logging
+        uses: actions/checkout@v4
+        with:
+          repository: TavallStudios/tavall-logging
+          ref: main
+          path: tavall-logging
+
+      - name: Checkout canonical Tavall architecture tests
+        uses: actions/checkout@v4
+        with:
+          repository: TavallStudios/Tavall-Architecture-Tests
+          ref: main
+          path: Tavall-Architecture-Tests
+
+      - name: Checkout standalone Strands bridge
+        uses: actions/checkout@v4
+        with:
+          repository: tjXJNOOBIE/strands-bridge
+          ref: main
+          path: strands-bridge
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: strands-bridge/package-lock.json
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "9.1.0"
+
+      - name: Validate and publish canonical architecture gate locally
+        working-directory: Tavall-Architecture-Tests
+        run: |
+          gradle --no-daemon \
+            :modules:core:check :modules:core:publishToMavenLocal \
+            :modules:patterns:check :modules:patterns:publishToMavenLocal \
+            :modules:di:check :modules:di:publishToMavenLocal \
+            :modules:runtime:check :modules:runtime:publishToMavenLocal \
+            :gradle-plugin:check :gradle-plugin:publishToMavenLocal
+
+      - name: Validate shared Function Catalog provider
+        working-directory: function-catalog
+        run: ./gradlew --no-daemon -PtavallVersion=1.0.3 clean check publishToMavenLocal stageRuntime
+
+      - name: Validate standalone Strands bridge
+        working-directory: strands-bridge
+        run: |
+          npm ci --ignore-scripts
+          npm run check:real
+
+      - name: Configure physical bridge integration
+        shell: bash
+        run: |
+          echo "STRANDS_BRIDGE_INTEGRATION_NODE=$(command -v node)" >> "$GITHUB_ENV"
+          echo "STRANDS_BRIDGE_INTEGRATION_ENTRYPOINT=${GITHUB_WORKSPACE}/strands-bridge/dist/mcp/main.js" >> "$GITHUB_ENV"
+
+      - name: Validate Java Recovery slice
+        working-directory: Recovery-Agent
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon -Dstrands.bridge.integration.required=true clean test build 2>&1 | tee java-migration.log
+
+      - name: Preserve Java migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-java-migration-diagnostics
+          path: |
+            Recovery-Agent/java-migration.log
+            Recovery-Agent/build/reports/**
+            Recovery-Agent/build/test-results/**
+            Recovery-Agent/state-authority/build/reports/**
+            Recovery-Agent/state-authority/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 7

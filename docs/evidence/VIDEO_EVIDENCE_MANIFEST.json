@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "agent": "Recovery Agent",
+  "generatedAt": "2026-09-12T18:22:00Z",
+  "entries": [
+    {
+      "scenario": "Controlled development service failure and bounded recovery",
+      "date": "2026-09-12",
+      "environment": "Tavall Cloud DEVELOPMENT on dev-storage; loopback control and node adapters",
+      "serviceProvider": "Tavall Cloud life-agent-hosted-demo / e2e-life-agent-hosted-demo.service",
+      "sourceCommit": "6c4abeea293f4f5141cb0b79b4bce3c47a8a1574",
+      "artifactFilename": "01-recovery-real-service.mp4",
+      "artifactLocation": "/srv/workspace/tavall-pr-campaign.elxWjs/video-evidence/2026-09-12/01-recovery-real-service.mp4",
+      "artifactSha256": "27c453c69b98d99df70a6f86dbde8607c37bb269b0754fe8817ac0315cad8d7c",
+      "action": "Typed Tavall Cloud stop created the controlled fault; Java service_inspect and recovery_readiness observed it; Java recovery_recover invoked the restricted node gateway, restarted the real service, and waited for bounded health verification.",
+      "authoritativeVerification": "Recovery returned RECOVERED with HTTP 200 from the fixed /healthz probe; the final Tavall Cloud service inspect returned desiredState RUNNING and actualState RUNNING.",
+      "classification": "REAL"
+    }
+  ]
+}
