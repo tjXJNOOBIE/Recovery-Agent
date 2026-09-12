@@ -185,11 +185,17 @@ jobs:
           set -euo pipefail
           root=/tmp/recovery-acceptance
           node_bin="$(command -v node)"
+          legacy_cli="$(find "$GITHUB_WORKSPACE" -type f -path '*/dist/cli/main.js' -print -quit)"
+          if [ -z "$legacy_cli" ]; then
+            echo 'Compiled Recovery node infrastructure was not found under the checkout.' >&2
+            find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -name 'main.js' -print >&2 || true
+            exit 1
+          fi
           sudo -u recovery-node-test env \
             HOME="$root/node" \
             PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \
             RECOVERY_NODE_TOKEN="$RECOVERY_NODE_TOKEN" \
-            "$node_bin" "$GITHUB_WORKSPACE/dist/cli/main.js" node "$root/node/node.json" \
+            "$node_bin" "$legacy_cli" node "$root/node/node.json" \
             >"$root/logs/node.out" 2>"$root/logs/node.err" &
           echo $! > "$root/node-agent.pid"
           sleep 2
