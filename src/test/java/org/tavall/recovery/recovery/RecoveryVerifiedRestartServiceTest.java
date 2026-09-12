@@ -72,6 +72,26 @@ class RecoveryVerifiedRestartServiceTest {
         }
     }
 
+    @Test
+    void acceptedRestartIsPolledUntilARealisticStartupBecomesHealthy() {
+        String jdbcUrl = jdbcUrl();
+        try (RecoveryRestartIntentService intents = intentService(jdbcUrl, true)) {
+            RecordingGateway gateway = new RecordingGateway(intents, false, 2);
+            RecoveryVerifiedRestartService service = service(gateway, intents);
+
+            RecoveryVerifiedRestartService.RestartRunResult result = service.attemptAutomaticRestart(
+                    "east",
+                    "api",
+                    Instant.parse("2026-09-11T03:45:00Z")
+            );
+
+            assertThat(result.status()).isEqualTo(RecoveryVerifiedRestartService.RestartRunStatus.RECOVERED);
+            assertThat(result.message()).contains("bounded startup polling");
+            assertThat(result.after().healthy()).isTrue();
+            assertThat(gateway.restartCalls).isEqualTo(1);
+        }
+    }
+
     private RecoveryVerifiedRestartService service(
             RecoveryNodeGateway gateway,
             RecoveryRestartIntentService intents
@@ -137,13 +157,24 @@ class RecoveryVerifiedRestartServiceTest {
     private static final class RecordingGateway implements RecoveryNodeGateway {
         private final RecoveryRestartIntentService intents;
         private final boolean failEffect;
+        private int inspectionsUntilHealthy;
+        private boolean restartIssued;
         private RecoveryNodeSnapshot.RecoveryServiceSnapshot current = snapshot("failed", false, 0);
         private int restartCalls;
         private int observedDurableAttemptsAtRestart;
 
         private RecordingGateway(RecoveryRestartIntentService intents, boolean failEffect) {
+            this(intents, failEffect, 0);
+        }
+
+        private RecordingGateway(
+                RecoveryRestartIntentService intents,
+                boolean failEffect,
+                int inspectionsUntilHealthy
+        ) {
             this.intents = intents;
             this.failEffect = failEffect;
+            this.inspectionsUntilHealthy = inspectionsUntilHealthy;
         }
 
         @Override
@@ -163,6 +194,9 @@ class RecoveryVerifiedRestartServiceTest {
 
         @Override
         public RecoveryNodeSnapshot.RecoveryServiceSnapshot inspectService(String serviceId) {
+            if (restartIssued && !current.healthy() && inspectionsUntilHealthy > 0 && --inspectionsUntilHealthy == 0) {
+                current = snapshot("running", true, 1);
+            }
             return current;
         }
 
@@ -173,7 +207,10 @@ class RecoveryVerifiedRestartServiceTest {
             if (failEffect) {
                 throw new IllegalStateException("simulated transport ambiguity");
             }
-            current = snapshot("running", true, 1);
+            restartIssued = true;
+            current = inspectionsUntilHealthy == 0
+                    ? snapshot("running", true, 1)
+                    : snapshot("starting", false, 1);
             return new RecoveryServiceActionResult(true, "restart", "accepted", current);
         }
     }

@@ -33,8 +33,13 @@ public final class RecoveryStrandsConfigurationResolver {
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "GOOGLE_API_KEY",
-            "GEMINI_API_KEY"
-    );
+            "GEMINI_API_KEY",
+            "STRANDS_BRIDGE_USE_CODEX_SUBSCRIPTION",
+            "STRANDS_BRIDGE_CODEX_COMMAND",
+            "STRANDS_BRIDGE_CODEX_MODEL",
+            "STRANDS_BRIDGE_CODEX_TIMEOUT_MS",
+            "STRANDS_BRIDGE_CODEX_REASONING_EFFORT"
+        );
 
     private final Map<String, String> environment;
 

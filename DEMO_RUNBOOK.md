@@ -4,8 +4,10 @@
 
 ```bash
 npm install
-npm run check
-npm run demo
+npm run check:legacy
+gradle --no-daemon clean check installDist
+npm run package:runtime
+npm pack
 ```
 
 The demo is explicitly labeled `SIMULATED DEMONSTRATION`; it is not evidence
@@ -31,15 +33,13 @@ the physical systemd gate passed on merged main. Run 34466113051 recorded
 caller-supplied unit. Do not present the local simulated demo as physical
 recovery evidence.
 
-## Hosted control-host smoke
+## Java packaged control-host smoke
 
-The HTTP adapter wraps the same stdio MCP control host and is suitable for a
-Tavall `EXTERNAL_SYSTEMD` service. A physical local smoke used a real loopback
-node configuration and the running `e2e-life-agent-hosted-demo.service` as a
-read-only inspected target. It passed HTTP health, MCP initialize, 16-tool
-discovery, `fleet_status`, and `service_inspect`, then terminated both child
-processes cleanly. This smoke does not claim an external public endpoint or an
-authorized model invocation.
+The Java `recovery-agent mcp` process is the packaged control-host surface. It
+binds loopback, serves `/healthz` and `/readyz`, and serves the same Java
+Function Catalog operator tools over Streamable HTTP. The legacy TypeScript
+HTTP adapter remains a migration/reference surface and must not be used as
+evidence for the Java product.
 
 The current Tavall service is `recovery-agent-hosted-demo`, running merged
 commit `e927658826b6640c51e1b78c9022d86854833220`. Tavall start/restart,

@@ -18,6 +18,7 @@ import java.util.List;
 
 /** Trusted read-only operator readiness surface. */
 public final class RecoveryReadinessHandler implements DependencyAccess<RecoveryDependencies> {
+    private static final boolean MUTATION_CUTOVER_COMPLETE = true;
     private final RecoveryPolicyResolver policyResolver = new RecoveryPolicyResolver();
     private final RecoveryAutomaticRestartBudgetEvaluator budgetEvaluator =
             new RecoveryAutomaticRestartBudgetEvaluator();
@@ -44,7 +45,7 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
                 count(services, ReadinessStatus.UNREACHABLE),
                 durableBudget.available(),
                 durableBudget.error(),
-                false
+                MUTATION_CUTOVER_COMPLETE
         );
     }
 
@@ -145,11 +146,7 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
                 && durableBudget.available()
                 && budget != null
                 && budget.remainingAttempts() > 0;
-        if (automaticRecoveryPreconditionsSatisfied) {
-            reasons.add(
-                    "Policy, dependency, and durable budget preconditions pass, but mutation remains disabled until operation exclusion, verified effects, incidents, and approval reconciliation are ported to Java"
-            );
-        }
+        boolean mutationAvailable = automaticRecoveryPreconditionsSatisfied;
 
         return new ServiceReadiness(
                 policy.nodeId(),
@@ -165,7 +162,7 @@ public final class RecoveryReadinessHandler implements DependencyAccess<Recovery
                 budget,
                 policyEligible,
                 automaticRecoveryPreconditionsSatisfied,
-                false,
+                mutationAvailable,
                 dependencyReadiness,
                 List.copyOf(reasons)
         );

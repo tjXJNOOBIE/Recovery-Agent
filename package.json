@@ -1,24 +1,15 @@
 {
   "name": "@tjxjnoobie/recovery-agent",
-  "version": "0.1.0",
-  "description": "A Strands-powered control-host agent for bounded machine and service recovery.",
+  "version": "0.2.0",
+  "description": "Java-owned control-host Recovery Agent with an npm installation and launcher layer.",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-    "bin": {
-    "recovery-agent": "./dist/cli/main.js"
+  "bin": {
+    "recovery-agent": "./bin/recovery-agent.mjs"
   },
   "files": [
-    "dist",
-    "state-authority-runtime",
-    "server",
-    "examples",
+    "bin",
+    "runtime",
+    "runtime-manifest.json",
     "README.md",
     "LICENSE"
   ],
@@ -26,23 +17,25 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "build:state-authority": "gradle -p state-authority installDist --no-daemon",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test \".test-dist/test/**/*.test.js\"",
-    "check": "npm run typecheck && npm run test && npm run build",
-    "demo": "npm run build && node dist/cli/main.js demo",
-    "serve:http": "node server/http.mjs",
-    "prepack": "npm run build && npm run build:state-authority"
+    "build:legacy": "tsc -p tsconfig.build.json",
+    "typecheck:legacy": "tsc -p tsconfig.json --noEmit",
+    "test:legacy": "tsc -p tsconfig.test.json && node --test \".test-dist/test/**/*.test.js\"",
+    "check:legacy": "npm run typecheck:legacy && npm run test:legacy && npm run build:legacy",
+    "package:runtime": "node scripts/package-runtime.mjs",
+    "check:package": "npm run package:runtime && node bin/recovery-agent.mjs doctor",
+    "check": "npm run check:legacy && npm run check:package",
+    "demo:legacy": "npm run build:legacy && node dist/cli/main.js demo",
+    "serve:http:legacy": "node server/http.mjs",
+    "prepack": "npm run package:runtime"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
-    "@tjxjnoobie/strands-bridge": "github:tjXJNOOBIE/strands-bridge#a3de4eb0fd784159e3fa8f52539aec350956b8df",
-    "zod": "4.5.4"
+    "@tjxjnoobie/strands-bridge": "github:tjXJNOOBIE/strands-bridge#34b2d0129d362edc10b9b540114e81a5cabf082f"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
     "@types/node": "^22.15.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "zod": "4.5.4"
   },
   "license": "MIT",
   "publishConfig": {

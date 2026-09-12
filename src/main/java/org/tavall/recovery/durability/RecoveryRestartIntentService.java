@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.UnaryOperator;
 
 /**
  * In-process Java durability boundary for automatic restart intent.
@@ -41,6 +42,27 @@ public final class RecoveryRestartIntentService implements AutoCloseable {
     public List<RecoveryAutomaticRestartBudgetEvaluator.RestartAttempt> loadAttempts() {
         RecoveryStateLoadResult loaded = authority.load();
         return parseAttempts(loaded.snapshot().path("restartAttempts"));
+    }
+
+    /** Applies one optimistic-concurrency-protected durable state transition. */
+    public JsonNode updateSnapshot(UnaryOperator<ObjectNode> transition) {
+        Objects.requireNonNull(transition, "transition");
+        RecoveryStateStaleRevisionException lastConflict = null;
+        for (int retry = 0; retry < MAX_RESERVATION_RETRIES; retry++) {
+            RecoveryStateLoadResult loaded = authority.load();
+            ObjectNode candidate = requireObject(loaded.snapshot()).deepCopy();
+            ObjectNode transitioned = Objects.requireNonNull(transition.apply(candidate), "transition result");
+            try {
+                return authority.commit(loaded.revision(), transitioned).snapshot();
+            } catch (RecoveryStateStaleRevisionException conflict) {
+                lastConflict = conflict;
+            }
+        }
+        throw new IllegalStateException(
+                "Recovery durable state transition could not acquire a CAS revision after "
+                        + MAX_RESERVATION_RETRIES + " attempts",
+                lastConflict
+        );
     }
 
     /**

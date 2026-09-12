@@ -39,7 +39,7 @@ class RecoveryReadinessHandlerTest {
     }
 
     @Test
-    void failedTargetWithHealthyDependencyIsPolicyEligibleButMutationRemainsUnavailable() {
+    void failedTargetWithoutDurableStateRemainsUnavailable() {
         register(new FixedGateway(
                 snapshot("api", "failed", false),
                 snapshot("db", "running", true)
@@ -57,7 +57,26 @@ class RecoveryReadinessHandlerTest {
             assertThat(dependency.reachable()).isTrue();
             assertThat(dependency.healthy()).isTrue();
         });
-        assertThat(report.mutationCutoverComplete()).isFalse();
+        assertThat(report.mutationCutoverComplete()).isTrue();
+    }
+
+    @Test
+    void durablePolicyEligibleTargetExposesTrustedMutationAvailability() {
+        restartIntentService = durableRestartIntentService();
+        register(
+                new FixedGateway(
+                        snapshot("api", "failed", false),
+                        snapshot("db", "running", true)
+                ),
+                Optional.of(restartIntentService)
+        );
+
+        RecoveryReadinessHandler.RecoveryReadinessReport report = new RecoveryReadinessHandler().inspectReadiness();
+        RecoveryReadinessHandler.ServiceReadiness api = service(report, "api");
+
+        assertThat(report.mutationCutoverComplete()).isTrue();
+        assertThat(api.automaticRecoveryPreconditionsSatisfied()).isTrue();
+        assertThat(api.mutationAvailable()).isTrue();
     }
 
     @Test

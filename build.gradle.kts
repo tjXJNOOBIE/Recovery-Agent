@@ -1,7 +1,7 @@
 plugins {
     application
     java
-    id("org.tavall.architecture-tests") version "0.1.0-SNAPSHOT"
+    id("org.tavall.architecture-tests") version "1.0.0"
 }
 
 group = "org.tavall.recovery"
@@ -12,7 +12,6 @@ java {
 }
 
 repositories {
-    mavenLocal()
     mavenCentral()
     val githubToken = providers.environmentVariable("GITHUB_TOKEN").orNull
     if (!githubToken.isNullOrBlank()) {
@@ -33,7 +32,7 @@ repositories {
     }
 }
 
-val functionCatalogVersion = providers.gradleProperty("functionCatalogVersion").orElse("1.0.1")
+val functionCatalogVersion = providers.gradleProperty("functionCatalogVersion").orElse("1.0.3")
 val tavallDiVersion = providers.gradleProperty("tavallDiVersion").orElse("1.0.0")
 
 dependencies {
@@ -45,6 +44,7 @@ dependencies {
     implementation("org.tavall:tavall-di:${tavallDiVersion.get()}")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.20.1")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.20.1")
+    implementation("org.apache.tomcat.embed:tomcat-embed-core:11.0.20")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")

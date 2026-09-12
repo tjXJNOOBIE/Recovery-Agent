@@ -1,24 +1,17 @@
 pluginManagement {
     repositories {
-        mavenLocal()
+        val githubToken = providers.environmentVariable("GITHUB_TOKEN").orNull
+        if (!githubToken.isNullOrBlank()) {
+            maven("https://maven.pkg.github.com/TavallStudios/Tavall-Architecture-Tests") {
+                credentials {
+                    username = providers.environmentVariable("GITHUB_ACTOR").orElse("github").get()
+                    password = githubToken
+                }
+            }
+        }
         gradlePluginPortal()
     }
 }
 
 rootProject.name = "recovery-agent"
 include(":state-authority")
-
-val functionCatalogCheckout = file("../function-catalog")
-if (functionCatalogCheckout.resolve("settings.gradle.kts").isFile) {
-    includeBuild(functionCatalogCheckout)
-}
-
-val tavallDiCheckout = file("../tavall-di")
-if (tavallDiCheckout.resolve("settings.gradle.kts").isFile) {
-    includeBuild(tavallDiCheckout)
-}
-
-val tavallLoggingCheckout = file("../tavall-logging")
-if (tavallLoggingCheckout.resolve("settings.gradle.kts").isFile) {
-    includeBuild(tavallLoggingCheckout)
-}

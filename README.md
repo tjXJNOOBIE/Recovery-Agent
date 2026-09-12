@@ -57,13 +57,33 @@ control-host durability
 
 There is no normal arbitrary-shell recovery surface.
 
+## npm distribution
+
+The public product package is a thin launcher around the Java distribution. It
+verifies the bundled runtime manifest, launches the authoritative Java control
+process, and resolves the pinned standalone Strands bridge automatically.
+
+```bash
+npm install @tjxjnoobie/recovery-agent
+npx @tjxjnoobie/recovery-agent doctor
+npx recovery-agent mcp ./control.json
+npx recovery-agent invoke ./control.json "Inspect the configured service"
+```
+
+The package is prepared for public npm publication. Current clean-consumer
+evidence uses the versioned tarball produced by `npm pack` because the registry
+does not currently contain this package.
+
 ## Requirements
 
 - Node.js 22+
 - Java 25 when durable state is enabled
 - PostgreSQL when durable state is enabled
 
-Packaged npm artifacts include the Java state-authority launcher and its runtime JARs. An end user running a packaged build does **not** need Gradle or Tavall GitHub Packages credentials. Source/release packaging still needs the build-time credentials required to resolve Tavall Database.
+Packaged npm artifacts include the Java control runtime and all resolved runtime
+JARs. An end user running a packaged build does **not** need Gradle or Tavall
+GitHub Packages credentials. Source/release packaging still needs the build-time
+credentials required to resolve Tavall Database.
 
 ## Demo
 
@@ -97,7 +117,10 @@ export RECOVERY_STATE_DB_PASSWORD='replace-me'
 recovery-agent mcp ./control.json
 ```
 
-Recovery Agent uses the official MCP TypeScript server SDK v2. Approval/rejection remain outside model-facing MCP.
+The Java MCP binds to loopback by default and exposes the trusted operator
+surface at `/mcp` plus read-only `/healthz` and `/readyz`. The model-facing
+Function Catalog view remains filtered to observation functions; recovery
+mutation is not available through that view.
 
 ## Hosted MCP adapter
 
@@ -265,7 +288,7 @@ Linux node evidence covers memory, swap, filesystem bytes/inodes, root read-only
 
 ## Strands boundary
 
-Recovery Agent depends on `@tjxjnoobie/strands-bridge`, pinned to merged `main` commit `590a6a33ec3d39c03d4c59e560caf1c4e37c6976`, rather than directly on `@strands-agents/sdk`.
+Recovery Agent depends on `@tjxjnoobie/strands-bridge`, pinned to merged `main` commit `0492c67f29ea271db9a2405770142de6fdfcd8b5`, rather than directly on `@strands-agents/sdk`.
 
 For local development without a model API key, a user with a ChatGPT subscription can set `RECOVERY_AGENT_MODEL_ID=codex-cli`. The shared bridge invokes the locally authenticated `codex` CLI as a bounded model subprocess while native Strands retains the tool loop and deterministic recovery authority. Run `codex login` once first. This is a local/user-owned mode and is not a hosted-service credential.
 

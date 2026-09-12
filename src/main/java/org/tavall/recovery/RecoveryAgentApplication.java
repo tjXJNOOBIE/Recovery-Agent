@@ -62,7 +62,7 @@ public final class RecoveryAgentApplication {
             CountDownLatch shutdown = new CountDownLatch(1);
             Runtime.getRuntime().addShutdownHook(new Thread(shutdown::countDown, "recovery-agent-shutdown"));
             System.out.println("Recovery Agent Java operator MCP: " + runtime.operatorMcpEndpoint());
-            System.out.println("Mutation tools remain unavailable until the Java recovery policy/approval/durability port is complete.");
+            System.out.println("Recovery Agent Java operator MCP is ready; recovery_recover is trusted-operator-only and never exposed to Strands.");
             shutdown.await();
         }
     }

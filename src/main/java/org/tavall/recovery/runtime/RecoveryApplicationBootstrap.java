@@ -6,7 +6,7 @@ import org.tavall.ai.agent.strands.StrandsAgentProvider;
 import org.tavall.ai.agent.strands.StrandsAgentProviderConfiguration;
 import org.tavall.ai.core.catalog.AIFunctionCatalog;
 import org.tavall.ai.core.catalog.AIFunctionCatalogView;
-import org.tavall.ai.mcp.server.AIFunctionMcpHttpServer;
+import org.tavall.ai.mcp.server.AIFunctionMcpStandaloneHttpServer;
 import org.tavall.dependency.maps.DependencyMap;
 import org.tavall.recovery.agent.RecoveryStrandsConfigurationResolver;
 import org.tavall.recovery.config.RecoveryControlConfiguration;
@@ -15,6 +15,9 @@ import org.tavall.recovery.durability.RecoveryRestartIntentService;
 import org.tavall.recovery.handler.RecoveryAgentInvocationHandler;
 import org.tavall.recovery.handler.RecoveryObservationHandler;
 import org.tavall.recovery.handler.RecoveryReadinessHandler;
+import org.tavall.recovery.handler.RecoveryOperatorHandler;
+import org.tavall.recovery.incident.RecoveryIncidentService;
+import org.tavall.recovery.recovery.RecoveryVerifiedRestartService;
 import org.tavall.recovery.node.HttpRecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeGateway;
 import org.tavall.recovery.node.RecoveryNodeGatewayResolver;
@@ -35,14 +38,6 @@ public final class RecoveryApplicationBootstrap {
             "node_inspect",
             "service_inspect"
     );
-    private static final Set<String> OPERATOR_FUNCTIONS = Set.of(
-            "fleet_status",
-            "node_inspect",
-            "service_inspect",
-            "recovery_readiness",
-            "recovery_invoke"
-    );
-
     private RecoveryApplicationBootstrap() {
     }
 
@@ -66,6 +61,12 @@ public final class RecoveryApplicationBootstrap {
                 new RecoveryStateAuthorityBuilder(safeEnvironment, objectMapper)
                         .buildIfConfigured()
                         .map(authority -> new RecoveryRestartIntentService(authority, objectMapper));
+        Optional<RecoveryIncidentService> incidentService = restartIntentService.map(
+                service -> new RecoveryIncidentService(service, objectMapper)
+        );
+        Optional<RecoveryVerifiedRestartService> restartService = restartIntentService.map(
+                service -> new RecoveryVerifiedRestartService(configuration, gatewayResolver, service)
+        );
         StrandsAgentProviderConfiguration strandsConfiguration = new RecoveryStrandsConfigurationResolver(safeEnvironment)
                 .resolve();
         StrandsAgentProvider strandsProvider = new StrandsAgentProvider(strandsConfiguration);
@@ -83,34 +84,49 @@ public final class RecoveryApplicationBootstrap {
                 gatewayResolver,
                 agentRuntime,
                 objectMapper,
-                restartIntentService
+                restartIntentService,
+                incidentService,
+                restartService
         );
         DependencyMap.getDependencyMap().registerInstance(RecoveryDependencies.class, dependencies);
 
-        AIFunctionCatalogView operatorView = null;
-        AIFunctionMcpHttpServer operatorServer = null;
+        AIFunctionMcpStandaloneHttpServer operatorServer = null;
         try {
             catalog.registerInstances(List.of(
                     new RecoveryObservationHandler(),
                     new RecoveryReadinessHandler(),
-                    new RecoveryAgentInvocationHandler()
+                    new RecoveryAgentInvocationHandler(),
+                    new RecoveryOperatorHandler()
             ));
-            operatorView = new AIFunctionCatalogView(
+            AIFunctionMcpStandaloneHttpServer.Configuration serverConfiguration =
+                    new AIFunctionMcpStandaloneHttpServer.Configuration(
+                            loopbackHost(safeEnvironment, "RECOVERY_AGENT_HOST", "127.0.0.1"),
+                            positivePort(safeEnvironment, "RECOVERY_AGENT_PORT", 7844),
+                            "",
+                            "/mcp",
+                            "recovery-agent",
+                            "0.2.0",
+                            "Java-owned Recovery Agent operator MCP. The model view is separately filtered and never receives recovery mutation authority."
+                    );
+            operatorServer = AIFunctionMcpStandaloneHttpServer.start(
                     catalog,
-                    function -> OPERATOR_FUNCTIONS.contains(function.getName())
+                    serverConfiguration,
+                    List.of(),
+                    List.of(),
+                    Map.of(),
+                    List.of(new AIFunctionMcpStandaloneHttpServer.ServletRegistration(
+                            "recoveryStatus",
+                            new RecoveryStatusServlet(),
+                            List.of("/", "/healthz", "/readyz")
+                    ))
             );
-            operatorServer = AIFunctionMcpHttpServer.start(operatorView);
             return new RecoveryApplicationRuntime(
                     operatorServer,
-                    operatorView,
                     strandsProvider,
                     gateways,
                     restartIntentService
             );
         } catch (RuntimeException exception) {
-            if (operatorView != null) {
-                operatorView.revoke();
-            }
             if (operatorServer != null) {
                 try {
                     operatorServer.close();
@@ -167,6 +183,37 @@ public final class RecoveryApplicationBootstrap {
             } catch (RuntimeException closeFailure) {
                 failure.addSuppressed(closeFailure);
             }
+        }
+    }
+
+    private static String optionalOrDefault(Map<String, String> environment, String name, String fallback) {
+        String value = environment.get(name);
+        return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    private static String loopbackHost(Map<String, String> environment, String name, String fallback) {
+        String value = optionalOrDefault(environment, name, fallback);
+        if (!"localhost".equalsIgnoreCase(value)
+                && !"127.0.0.1".equals(value)
+                && !"::1".equals(value)) {
+            throw new IllegalArgumentException(name + " must be loopback-only until an authenticated public Recovery adapter exists");
+        }
+        return value;
+    }
+
+    private static int positivePort(Map<String, String> environment, String name, int fallback) {
+        String value = environment.get(name);
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            int port = Integer.parseInt(value);
+            if (port <= 0 || port > 65_535) {
+                throw new NumberFormatException();
+            }
+            return port;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(name + " must be a positive TCP port", exception);
         }
     }
 }

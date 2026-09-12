@@ -12,6 +12,7 @@ import org.tavall.recovery.policy.RecoveryPolicyResolver;
 import org.tavall.recovery.policy.ServiceRecoveryPolicy;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -27,6 +28,8 @@ import java.util.Objects;
  * application-owned mutable keyed operation registry.</p>
  */
 public final class RecoveryVerifiedRestartService {
+    private static final Duration VERIFICATION_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration VERIFICATION_POLL_INTERVAL = Duration.ofMillis(250);
     private final RecoveryControlConfiguration configuration;
     private final RecoveryNodeGatewayResolver gateways;
     private final RecoveryRestartIntentService restartIntents;
@@ -211,7 +214,27 @@ public final class RecoveryVerifiedRestartService {
                     dependencies,
                     reservation.budget(),
                     true,
-                    "Durable restart intent was executed and verified healthy"
+                "Durable restart intent was executed and verified healthy"
+            );
+        }
+
+        RecoveryNodeSnapshot.RecoveryServiceSnapshot verified = awaitHealthy(
+                gateway,
+                policy,
+                after
+        );
+        if (policyResolver.isHealthy(verified, policy)) {
+            return new RestartRunResult(
+                    RestartRunStatus.RECOVERED,
+                    policy.nodeId(),
+                    policy.serviceId(),
+                    before,
+                    verified,
+                    action,
+                    dependencies,
+                    reservation.budget(),
+                    true,
+                    "Durable restart intent was executed and verified healthy after bounded startup polling"
             );
         }
         return new RestartRunResult(
@@ -219,13 +242,39 @@ public final class RecoveryVerifiedRestartService {
                 policy.nodeId(),
                 policy.serviceId(),
                 before,
-                after,
+                verified,
                 action,
                 dependencies,
                 reservation.budget(),
                 true,
                 "Restart was accepted but deterministic verification did not restore health"
         );
+    }
+
+    private RecoveryNodeSnapshot.RecoveryServiceSnapshot awaitHealthy(
+            RecoveryNodeGateway gateway,
+            ServiceRecoveryPolicy policy,
+            RecoveryNodeSnapshot.RecoveryServiceSnapshot initial
+    ) {
+        RecoveryNodeSnapshot.RecoveryServiceSnapshot observed = initial;
+        long deadline = System.nanoTime() + VERIFICATION_TIMEOUT.toNanos();
+        while (System.nanoTime() < deadline) {
+            sleepBeforeVerificationPoll();
+            observed = gateway.inspectService(policy.serviceId());
+            if (policyResolver.isHealthy(observed, policy)) {
+                return observed;
+            }
+        }
+        return observed;
+    }
+
+    private static void sleepBeforeVerificationPoll() {
+        try {
+            Thread.sleep(VERIFICATION_POLL_INTERVAL);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Recovery verification was interrupted", exception);
+        }
     }
 
     private List<DependencyResult> inspectDependencies(ServiceRecoveryPolicy policy) {
