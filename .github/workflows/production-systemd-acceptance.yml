@@ -184,11 +184,12 @@ jobs:
         run: |
           set -euo pipefail
           root=/tmp/recovery-acceptance
+          node_bin="$(command -v node)"
           sudo -u recovery-node-test env \
             HOME="$root/node" \
             PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \
             RECOVERY_NODE_TOKEN="$RECOVERY_NODE_TOKEN" \
-            node "$GITHUB_WORKSPACE/dist/cli/main.js" node "$root/node/node.json" \
+            "$node_bin" "$GITHUB_WORKSPACE/dist/cli/main.js" node "$root/node/node.json" \
             >"$root/logs/node.out" 2>"$root/logs/node.err" &
           echo $! > "$root/node-agent.pid"
           node ./node_modules/@tjxjnoobie/recovery-agent/bin/recovery-agent.mjs doctor
