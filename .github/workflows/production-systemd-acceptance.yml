@@ -65,6 +65,9 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund
           npm run build:legacy
+          rm -rf /tmp/recovery-node-runtime
+          mkdir -p /tmp/recovery-node-runtime
+          cp -a dist node_modules /tmp/recovery-node-runtime/
           export TAVALL_GRADLE_ARGUMENTS="--include-build $GITHUB_WORKSPACE/Tavall-Architecture-Tests"
           npm run package:runtime
           npm pack --ignore-scripts --silent > /tmp/recovery-tarball
@@ -185,12 +188,8 @@ jobs:
           set -euo pipefail
           root=/tmp/recovery-acceptance
           node_bin="$(command -v node)"
-          legacy_cli="$(find "$GITHUB_WORKSPACE" -type f -path '*/dist/cli/main.js' -print -quit)"
-          if [ -z "$legacy_cli" ]; then
-            echo 'Compiled Recovery node infrastructure was not found under the checkout.' >&2
-            find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -name 'main.js' -print >&2 || true
-            exit 1
-          fi
+          legacy_cli=/tmp/recovery-node-runtime/dist/cli/main.js
+          test -f "$legacy_cli"
           sudo -u recovery-node-test env \
             HOME="$root/node" \
             PATH="/opt/recovery-acceptance/bin:/usr/bin:/bin" \
