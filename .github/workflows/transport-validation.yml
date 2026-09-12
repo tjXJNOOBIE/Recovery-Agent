@@ -65,7 +65,7 @@ jobs:
           echo "RECOVERY_TLS_TEST_CERT_DIR=$dir" >> "$GITHUB_ENV"
 
       - name: Run strict checks and tests
-        run: npm run check
+        run: npm run check:legacy
 
       - name: Verify npm package shape
         run: npm pack --dry-run --ignore-scripts --json
