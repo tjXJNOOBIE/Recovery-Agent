@@ -1,8 +1,21 @@
 {
   "schemaVersion": 1,
   "agent": "Recovery Agent",
-  "generatedAt": "2026-09-12T21:33:54Z",
+  "generatedAt": "2026-09-13T06:41:21Z",
   "entries": [
+    {
+      "scenario": "Java Recovery Agent product UI: incident intake, healthy baseline, controlled development failure, unhealthy observation, policy/budget, bounded recovery, authoritative verification, audit, and MCP discovery",
+      "date": "2026-09-13",
+      "environment": "Tavall Cloud DEVELOPMENT; packaged Java Recovery Agent over loopback MCP; disposable PostgreSQL state schema and typed loopback node gateway",
+      "serviceProvider": "Tavall Cloud life-agent-hosted-demo / e2e-life-agent-hosted-demo.service",
+      "sourceCommit": "66dcdf0944559e19a321ca1bd7bd7ba1a9deca97",
+      "artifactFilename": "01-recovery-agent-product-demo.mp4",
+      "artifactLocation": "/srv/workspace/tavall-pr-campaign.elxWjs/video-evidence/2026-09-13/01-recovery-agent-product-demo.mp4",
+      "artifactSha256": "454a863e0e7dfa7b8322a9e559c58b4864079fff3d8cbfb286306d08394952dc",
+      "action": "The browser operator used the Java Recovery Agent product surface to inspect the configured service, observe the real Cloud service after a controlled stop, evaluate recovery readiness, invoke the trusted bounded recovery action, and open the resulting audit and MCP pages.",
+      "authoritativeVerification": "The Java recovery_recover call returned successfully after the typed node gateway started the named Tavall Cloud service; the final Java service_inspect reported healthy=true and the Cloud service projection reported RUNNING with /healthz HTTP 200.",
+      "classification": "REAL"
+    },
     {
       "scenario": "Controlled development service failure and bounded recovery",
       "date": "2026-09-12",
