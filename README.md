@@ -94,6 +94,25 @@ npm run demo
 
 The demo starts an ephemeral loopback node and drives the same HTTP gateway, control runtime, watch, incident, and planning boundaries used by the product. It is explicitly labeled `SIMULATED DEMONSTRATION`. Simulated model/host behavior is never presented as physical production evidence.
 
+## Java product demo
+
+The packaged Java control host also serves a loopback-only product surface at
+`/demo`. It is the product-facing view over the same Java MCP boundary; it is
+not a second Node authority:
+
+```bash
+RECOVERY_AGENT_HOST=127.0.0.1 RECOVERY_AGENT_PORT=7844 \
+  build/install/recovery-agent/bin/recovery-agent mcp ./control.json
+```
+
+Open `http://127.0.0.1:7844/demo`. The multi-surface UI covers incident intake,
+live observation, policy and restart budget, bounded recovery, verification,
+audit history, and MCP boundary discovery. Its buttons call Java
+`service_inspect`, `recovery_readiness`, and operator-only `recovery_recover`
+through Streamable HTTP. The target is injected from the machine-owned control
+configuration; the browser cannot choose a unit, shell command, probe, or
+credential.
+
 ## Node agent
 
 ```bash

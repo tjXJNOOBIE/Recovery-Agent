@@ -118,6 +118,13 @@ public final class RecoveryApplicationBootstrap {
                             "recoveryStatus",
                             new RecoveryStatusServlet(),
                             List.of("/", "/healthz", "/readyz")
+                    ), new AIFunctionMcpStandaloneHttpServer.ServletRegistration(
+                            "recoveryDemo",
+                            new RecoveryDemoServlet(
+                                    configuration.nodes().getFirst().id(),
+                                    configuration.nodes().getFirst().services().getFirst().id()
+                            ),
+                            List.of("/demo", "/demo/*")
                     ))
             );
             return new RecoveryApplicationRuntime(

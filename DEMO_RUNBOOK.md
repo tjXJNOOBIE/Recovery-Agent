@@ -13,6 +13,22 @@ npm pack
 The demo is explicitly labeled `SIMULATED DEMONSTRATION`; it is not evidence
 of a production restart.
 
+## Java product surface
+
+The packaged Java Recovery Agent serves a separate loopback-only product demo
+at `/demo`. It has Incident, Observe, Policy, Recover, Verify, Audit, and MCP
+pages and calls the real Java MCP endpoint from the browser. It must be run
+with a machine-owned control configuration:
+
+```bash
+RECOVERY_AGENT_HOST=127.0.0.1 RECOVERY_AGENT_PORT=7844 \
+  build/install/recovery-agent/bin/recovery-agent mcp ./control.json
+```
+
+Open `http://127.0.0.1:7844/demo`. This is the product UI over Java authority,
+not the legacy simulated Node demo and not an authorization bypass. Use a
+disposable development node/service for any mutation capture.
+
 ## Physical acceptance
 
 The authoritative physical path is now merged from PR #9 and
