@@ -1,14 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1250" height="420" viewBox="0 0 1250 420" role="img" aria-labelledby="title desc">
-  <title id="title">Recovery Agent architecture</title>
-  <desc id="desc">A bounded Strands control host persists typed recovery state and uses an outbound mutual TLS node session to restart a fixed systemd service, followed by fresh verification.</desc>
-  <rect width="1250" height="420" fill="#08111f"/>
-  <g font-family="Arial, sans-serif" font-size="17" fill="#f8fafc" text-anchor="middle">
-    <g stroke="#93c5fd" stroke-width="2" fill="#172554">
-      <rect x="25" y="170" width="145" height="75" rx="14"/><rect x="205" y="170" width="160" height="75" rx="14"/><rect x="400" y="170" width="170" height="75" rx="14"/><rect x="605" y="170" width="160" height="75" rx="14"/><rect x="800" y="170" width="155" height="75" rx="14"/><rect x="990" y="170" width="145" height="75" rx="14"/>
-      <rect x="455" y="300" width="170" height="60" rx="14" fill="#713f12" stroke="#fbbf24"/>
-    </g>
-    <text x="98" y="200">MCP host</text><text x="98" y="223">/ Inspector</text><text x="285" y="200">Control host</text><text x="285" y="223">+ Strands</text><text x="485" y="200">Typed deterministic</text><text x="485" y="223">control plane</text><text x="685" y="200">Durable Java</text><text x="685" y="223">authority / PG</text><text x="877" y="200">TLS 1.3</text><text x="877" y="223">node session</text><text x="1062" y="200">Fixed systemd</text><text x="1062" y="223">service</text><text x="540" y="326">Named human approval</text><text x="540" y="348">outside model-facing MCP</text>
-    <g stroke="#fbbf24" stroke-width="3" fill="none" marker-end="url(#arrow)"><path d="M170 207H205"/><path d="M365 207H400"/><path d="M570 207H605"/><path d="M765 207H800"/><path d="M955 207H990"/><path d="M540 300V245"/></g>
-  </g>
-  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#fbbf24"/></marker></defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+<title id="title">Reason on the Control Host, Mutate by Type</title><desc id="desc">Recovery Agent keeps AI reasoning on the control host, uses deterministic recovery policy and durable state, and reaches production nodes only through narrow typed mutual TLS operations.</desc>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#090B0F"/><stop offset="1" stop-color="#10151D"/></linearGradient>
+<style>.t{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;fill:#F8FAFC}.m{fill:#A8B3C4}.title{font-size:60px;font-weight:760;letter-spacing:-1.1px}.sub{font-size:27px}.head{font-size:30px;font-weight:700}.body{font-size:24px}.small{font-size:21px}.card{fill:#111823;stroke:#2B3646;stroke-width:2}.soft{fill:#0D141E;stroke:#263243;stroke-width:2}.line{stroke:#7DD3FC;stroke-width:4;fill:none}.dash{stroke:#A78BFA;stroke-width:4;stroke-dasharray:12 10;fill:none}</style>
+<marker id="a" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0L12 6L0 12Z" fill="#7DD3FC"/></marker><marker id="p" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0L12 6L0 12Z" fill="#A78BFA"/></marker>
+</defs>
+<rect width="1600" height="900" rx="34" fill="url(#bg)"/>
+<text x="82" y="98" class="t title">Reason on the Control Host, Mutate by Type</text><text x="82" y="143" class="t sub m">Production nodes expose recovery capabilities, not an AI-operated shell.</text>
+<rect x="545" y="210" width="510" height="430" rx="34" fill="#0D1A25" stroke="#5FD6F3" stroke-width="2.5"/>
+<text x="590" y="270" class="t head">Recovery Control Runtime</text>
+<text x="590" y="330" class="t body m">Inspect</text><text x="780" y="330" class="t body">Health + readiness</text>
+<text x="590" y="380" class="t body m">Decide</text><text x="780" y="380" class="t body">Policy + budgets</text>
+<text x="590" y="430" class="t body m">Persist</text><text x="780" y="430" class="t body">Write ahead</text>
+<text x="590" y="480" class="t body m">Recover</text><text x="780" y="480" class="t body">Typed restart</text>
+<text x="590" y="530" class="t body m">Verify</text><text x="780" y="530" class="t body">Fresh evidence</text>
+<rect x="590" y="570" width="420" height="44" rx="14" class="soft"/><text x="675" y="599" class="t small">No arbitrary shell surface</text>
+<rect x="90" y="240" width="330" height="150" rx="28" class="card"/><text x="125" y="300" class="t head">MCP host</text><text x="125" y="348" class="t body m">Inspect + bounded recover</text>
+<rect x="90" y="475" width="330" height="150" rx="28" class="card"/><text x="125" y="535" class="t head">Human approval</text><text x="125" y="583" class="t body m">Outside model-facing MCP</text>
+<rect x="1180" y="240" width="330" height="150" rx="28" class="card"/><text x="1215" y="300" class="t head">TLS 1.3 session</text><text x="1215" y="348" class="t body m">Pinned node identity</text>
+<rect x="1180" y="475" width="330" height="150" rx="28" class="card"/><text x="1215" y="535" class="t head">Fixed systemd target</text><text x="1215" y="583" class="t body m">Configured service mapping</text>
+<rect x="650" y="690" width="300" height="115" rx="28" class="card"/><text x="700" y="744" class="t head">Durable state</text><text x="700" y="784" class="t small m">Java authority + PostgreSQL</text>
+<path d="M545 330 L420 315" class="line" marker-end="url(#a)"/><path d="M545 505 L420 550" class="dash" marker-end="url(#p)"/><path d="M1055 330 L1180 315" class="line" marker-end="url(#a)"/><path d="M1055 505 L1180 550" class="line" marker-end="url(#a)"/><path d="M800 640 L800 690" class="line" marker-end="url(#a)"/>
+<rect x="90" y="700" width="430" height="105" rx="24" class="soft"/><text x="125" y="744" class="t head">Dependency aware</text><text x="125" y="782" class="t small m">Block unsafe downstream recovery.</text>
+<rect x="1080" y="700" width="430" height="105" rx="24" class="soft"/><text x="1115" y="744" class="t head">Fresh verification</text><text x="1115" y="782" class="t small m">Never trust the restart alone.</text>
 </svg>
