@@ -4,7 +4,7 @@
 
 Recovery Agent is a control-host recovery runtime for Linux services. AI stays on the control host; production nodes expose only narrow typed health and recovery operations. MCP hosts can inspect incidents, run bounded recovery, create semantic watches, and review evidence without receiving arbitrary shell access or approval authority.
 
-[Hackathon submission](HACKATHON_SUBMISSION.md) · [Demo runbook](DEMO_RUNBOOK.md) · [Architecture](docs/ARCHITECTURE.svg) · [Source](https://github.com/tjXJNOOBIE/Recovery-Agent)
+[Hackathon submission](HACKATHON_SUBMISSION.md) · [Demo runbook](DEMO_RUNBOOK.md) · [Architecture](docs/ARCHITECTURE.svg) · [Safety boundary](docs/SAFETY_BOUNDARY.svg) · [Source](https://github.com/tjXJNOOBIE/Recovery-Agent)
 
 ![Recovery Agent architecture](docs/ARCHITECTURE.svg)
 
@@ -95,6 +95,8 @@ Remote/model callers cannot provide unit names, shell commands, application-heal
 ## Recovery safety
 
 Recovery Agent treats mutation as a transaction with evidence.
+
+![Recovery Agent safety boundary](docs/SAFETY_BOUNDARY.svg)
 
 ```text
 unhealthy target
@@ -236,6 +238,7 @@ Use the project scripts and [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md) for the exact c
 - [`HACKATHON_SUBMISSION.md`](HACKATHON_SUBMISSION.md) contains the submission framing and pre-existing-component disclosure.
 - [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md) contains the exact demo and physical acceptance path.
 - [`docs/ARCHITECTURE.svg`](docs/ARCHITECTURE.svg) shows the bounded control-host/node authority model.
+- [`docs/SAFETY_BOUNDARY.svg`](docs/SAFETY_BOUNDARY.svg) shows the typed recovery and no-shell boundary.
 - The repository keeps simulated demo evidence, deterministic validation, and real transport/packaging evidence explicitly separated.
 
 The project is released under the [MIT License](LICENSE).
