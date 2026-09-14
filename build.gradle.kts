@@ -33,7 +33,7 @@ repositories {
     }
 }
 
-val functionCatalogVersion = providers.gradleProperty("functionCatalogVersion").orElse("1.0.3")
+val functionCatalogVersion = providers.gradleProperty("functionCatalogVersion").orElse("1.0.4")
 val tavallDiVersion = providers.gradleProperty("tavallDiVersion").orElse("1.0.0")
 
 dependencies {
