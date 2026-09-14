@@ -1,0 +1,60 @@
+package org.tavall.recovery.runtime;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.tavall.ai.agent.AIAgentRuntime;
+import org.tavall.recovery.config.RecoveryControlConfiguration;
+import org.tavall.recovery.durability.RecoveryRestartIntentService;
+import org.tavall.recovery.incident.RecoveryIncidentService;
+import org.tavall.recovery.recovery.RecoveryVerifiedRestartService;
+import org.tavall.recovery.node.RecoveryNodeGatewayResolver;
+
+import java.util.Objects;
+import java.util.Optional;
+
+/** Cohesive Java Recovery runtime dependency bundle exposed through Tavall DI. */
+public record RecoveryDependencies(
+        RecoveryControlConfiguration configuration,
+        RecoveryNodeGatewayResolver gateways,
+        AIAgentRuntime agentRuntime,
+        ObjectMapper objectMapper,
+        Optional<RecoveryRestartIntentService> restartIntentService,
+        Optional<RecoveryIncidentService> incidentService,
+        Optional<RecoveryVerifiedRestartService> restartService
+) {
+    public RecoveryDependencies {
+        configuration = Objects.requireNonNull(configuration, "configuration");
+        gateways = Objects.requireNonNull(gateways, "gateways");
+        agentRuntime = Objects.requireNonNull(agentRuntime, "agentRuntime");
+        objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+        restartIntentService = Objects.requireNonNull(restartIntentService, "restartIntentService");
+        incidentService = Objects.requireNonNull(incidentService, "incidentService");
+        restartService = Objects.requireNonNull(restartService, "restartService");
+    }
+
+    public RecoveryDependencies(
+            RecoveryControlConfiguration configuration,
+            RecoveryNodeGatewayResolver gateways,
+            AIAgentRuntime agentRuntime,
+            ObjectMapper objectMapper
+    ) {
+        this(configuration, gateways, agentRuntime, objectMapper, Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    public RecoveryDependencies(
+            RecoveryControlConfiguration configuration,
+            RecoveryNodeGatewayResolver gateways,
+            AIAgentRuntime agentRuntime,
+            ObjectMapper objectMapper,
+            Optional<RecoveryRestartIntentService> restartIntentService
+    ) {
+        this(
+                configuration,
+                gateways,
+                agentRuntime,
+                objectMapper,
+                restartIntentService,
+                Optional.empty(),
+                Optional.empty()
+        );
+    }
+}

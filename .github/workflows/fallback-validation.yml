@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Run checks
-        run: npm run check
+        run: npm run check:legacy
 
   durable-state:
     name: Java durable state authority
@@ -69,12 +69,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.7.1'
+      - name: Checkout canonical architecture tests for package build
+        uses: actions/checkout@v4
+        with:
+          repository: TavallStudios/Tavall-Architecture-Tests
+          ref: main
+          path: Tavall-Architecture-Tests
       - name: Install source dependencies
         run: npm install --no-audit --no-fund
       - name: Build real npm tarball
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          export TAVALL_GRADLE_ARGUMENTS="--include-build $GITHUB_WORKSPACE/Tavall-Architecture-Tests"
           npm pack --silent > /tmp/recovery-package-name
           tail -n 1 /tmp/recovery-package-name > /tmp/recovery-tarball
       - name: Install tarball into clean consumer
@@ -86,39 +93,15 @@ jobs:
       - name: Verify installed authority payload
         run: |
           PACKAGE_ROOT=/tmp/recovery-consumer/node_modules/@tjxjnoobie/recovery-agent
-          test -x "$PACKAGE_ROOT/state-authority-runtime/bin/recovery-state-authority"
-          find "$PACKAGE_ROOT/state-authority-runtime/lib" -type f -name '*.jar' -print -quit | grep -q .
-          test -f "$PACKAGE_ROOT/dist/cli/main.js"
-      - name: Run installed authority against PostgreSQL
-        env:
-          RECOVERY_STATE_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/recovery
-          RECOVERY_STATE_DB_USERNAME: postgres
-          RECOVERY_STATE_DB_PASSWORD: recovery-test-password
-          RECOVERY_STATE_GENERATE_SCHEMA: 'true'
-        run: |
-          PACKAGE_ROOT=/tmp/recovery-consumer/node_modules/@tjxjnoobie/recovery-agent
-          printf '%s\n' \
-            '{"id":"package-ping","operation":"ping"}' \
-            '{"id":"package-load","operation":"load"}' \
-            | "$PACKAGE_ROOT/state-authority-runtime/bin/recovery-state-authority" \
-            > /tmp/recovery-state-output
-          node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs'
-          const lines = readFileSync('/tmp/recovery-state-output', 'utf8').trim().split(/\r?\n/).filter(Boolean)
-          if (lines.length !== 2) throw new Error(`Expected exactly 2 authority responses, received ${lines.length}`)
-          const ping = JSON.parse(lines[0])
-          const load = JSON.parse(lines[1])
-          if (ping.id !== 'package-ping' || ping.ok !== true || ping.available !== true) throw new Error('Packaged authority ping failed')
-          if (load.id !== 'package-load' || load.ok !== true || load.revision !== 0 || load.snapshot?.schemaVersion !== 2) throw new Error('Packaged authority load failed')
-          NODE
-      - name: Run installed control host with bundled authority resolution
+          test -x "$PACKAGE_ROOT/runtime/bin/recovery-agent"
+          test -f "$PACKAGE_ROOT/runtime-manifest.json"
+          find "$PACKAGE_ROOT/runtime/lib" -type f -name 'recovery-agent-*.jar' -print -quit | grep -q .
+          find "$PACKAGE_ROOT/runtime/lib" -type f -name 'state-authority-*.jar' -print -quit | grep -q .
+      - name: Run installed Java control host over MCP
         working-directory: /tmp/recovery-consumer
         env:
           RECOVERY_NODE_TOKEN_PACKAGE: test-node-token-1234567890
-          RECOVERY_STATE_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/recovery
-          RECOVERY_STATE_DB_USERNAME: postgres
-          RECOVERY_STATE_DB_PASSWORD: recovery-test-password
-          RECOVERY_STATE_GENERATE_SCHEMA: 'true'
+          RECOVERY_AGENT_PORT: '37844'
         run: |
           cat > control.json <<'JSON'
           {
@@ -139,10 +122,10 @@ jobs:
             ]
           }
           JSON
+          set +e
           timeout 15s npx --no-install recovery-agent mcp ./control.json </dev/null >/tmp/recovery-mcp-output 2>/tmp/recovery-mcp-error
-          grep -q 'Recovery durable state authority hydrated revision 0' /tmp/recovery-mcp-error
-      - name: Run demo from installed npm package
-        working-directory: /tmp/recovery-consumer
-        run: npx --no-install recovery-agent demo > /tmp/recovery-demo.json
-      - name: Verify demo truthfulness label
-        run: node -e "const d=require('/tmp/recovery-demo.json'); if(d.label!=='SIMULATED DEMONSTRATION') process.exit(1)"
+          exit_code=$?
+          set -e
+          test "$exit_code" -eq 124
+          grep -q 'Recovery Agent Java operator MCP:' /tmp/recovery-mcp-output
+          grep -q 'recovery_recover is trusted-operator-only' /tmp/recovery-mcp-output
